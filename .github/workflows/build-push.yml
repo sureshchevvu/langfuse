@@ -21,6 +21,7 @@ jobs:
       build-id: ${{ steps.generate-id.outputs.unique-id }}
       aws-region: ${{ steps.env-config.outputs.AWS_REGION }}
       aws-account: ${{ steps.env-config.outputs.AWS_ACCOUNT }}
+      aws-role: ${{ steps.env-config.outputs.AWS_ROLE }}  # ADD THIS
     steps:
       - name: 🎲 Generate Build ID
         id: generate-id
@@ -42,18 +43,21 @@ jobs:
               echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
               echo "AWS_REGION=${{ secrets.DEV_AWS_REGION }}" >> $GITHUB_OUTPUT
               echo "AWS_ACCOUNT=${{ secrets.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
+              echo "AWS_ROLE=${{ secrets.DEV_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT  # ADD THIS
               echo "🔵 Environment: dev"
               ;;
             "chevvu/np")
               echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
               echo "AWS_REGION=${{ secrets.NP_AWS_REGION }}" >> $GITHUB_OUTPUT
               echo "AWS_ACCOUNT=${{ secrets.NP_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
+              echo "AWS_ROLE=${{ secrets.NP_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT  # ADD THIS
               echo "🟡 Environment: NP"
               ;;
             "chevvu/prod")
               echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
               echo "AWS_REGION=${{ secrets.PROD_AWS_REGION }}" >> $GITHUB_OUTPUT
               echo "AWS_ACCOUNT=${{ secrets.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
+              echo "AWS_ROLE=${{ secrets.PROD_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT  # ADD THIS
               echo "🔴 Environment: Production"
               ;;
             *)
@@ -99,7 +103,7 @@ jobs:
       - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ secrets[format('{0}_AWS_ROLE_NAME', needs.setup.outputs.environment)] }}
+          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}  # CHANGE THIS
           aws-region: ${{ needs.setup.outputs.aws-region }}
           role-duration-seconds: 3600
 
