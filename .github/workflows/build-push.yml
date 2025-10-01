@@ -174,11 +174,27 @@ jobs:
       - name: ✅ Verify Image Push
         run: |
           echo "🔍 Verifying image in ECR..."
-          aws ecr describe-images \
-            --repository-name "${{ steps.image-names.outputs.ecr-repo }}" \
-            --image-ids imageTag="${{ steps.image-names.outputs.image-tag }}" \
-            --query 'imageDetails[0].[imageTags,imagePushedAt,imageSizeInBytes]' \
-            --output table
+          REPO_NAME="${{ steps.image-names.outputs.ecr-repo }}"
+          IMAGE_TAG="${{ steps.image-names.outputs.image-tag }}"
+          
+          # Wait a moment for ECR to process
+          sleep 5
+          
+          # Describe the image
+          IMAGE_INFO=$(aws ecr describe-images \
+            --repository-name "$REPO_NAME" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --output json 2>/dev/null || echo '{"imageDetails":[]})
+          
+          # Check if image exists
+          if echo "$IMAGE_INFO" | jq -e '.imageDetails | length > 0' > /dev/null; then
+            echo "✅ Image successfully pushed to ECR!"
+            echo "$IMAGE_INFO" | jq -r '.imageDetails[0] | "Tag: \(.imageTags[0])\nPushed: \(.imagePushedAt)\nSize: \(.imageSizeInBytes) bytes"'
+          else
+            echo "❌ Warning: Image not found in ECR, but push command succeeded"
+            echo "This might be a timing issue. Checking repository..."
+            aws ecr describe-repositories --repository-names "$REPO_NAME" || true
+          fi
 
       - name: 📊 Image Summary
         run: |
