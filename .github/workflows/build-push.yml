@@ -18,61 +18,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      environment: ${{ steps.set-env.outputs.environment }}
-      build-id: ${{ steps.set-env.outputs.build-id }}
-      aws-region: ${{ steps.set-env.outputs.aws-region }}
-      aws-account: ${{ steps.set-env.outputs.aws-account }}
-      aws-role: ${{ steps.set-env.outputs.aws-role }}
+      environment: ${{ steps.env-config.outputs.ENVIRONMENT }}
+      build-id: ${{ steps.generate-id.outputs.unique-id }}
     steps:
-      - name: 🔧 Set Environment Variables
-        id: set-env
+      - name: 🎲 Generate Build ID
+        id: generate-id
         run: |
           BUILD_ID="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "unique-id=$BUILD_ID" >> $GITHUB_OUTPUT
+          echo "✅ Generated Build ID: $BUILD_ID"
+
+      - name: 🔧 Determine Environment
+        id: env-config
+        run: |
           BRANCH="${{ github.ref_name }}"
+          echo "🌿 Branch: $BRANCH"
           
-          echo "build-id=${BUILD_ID}" >> $GITHUB_OUTPUT
-          
-          case "$BRANCH" in
-            "chevvu/dev")
-              echo "environment=dev" >> $GITHUB_OUTPUT
-              echo "aws-region=${{ secrets.DEV_AWS_REGION }}" >> $GITHUB_OUTPUT
-              echo "aws-account=${{ secrets.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-              echo "aws-role=${{ secrets.DEV_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT
+          case $BRANCH in
+            "chevvu/dev") 
+              echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
               echo "🔵 Environment: dev"
               ;;
-            "chevvu/np")
-              echo "environment=np" >> $GITHUB_OUTPUT
-              echo "aws-region=${{ secrets.NP_AWS_REGION }}" >> $GITHUB_OUTPUT
-              echo "aws-account=${{ secrets.NP_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-              echo "aws-role=${{ secrets.NP_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT
-              echo "🟡 Environment: np"
+            "chevvu/np") 
+              echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
+              echo "🟡 Environment: NP"
               ;;
-            "chevvu/prod")
-              echo "environment=prod" >> $GITHUB_OUTPUT
-              echo "aws-region=${{ secrets.PROD_AWS_REGION }}" >> $GITHUB_OUTPUT
-              echo "aws-account=${{ secrets.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-              echo "aws-role=${{ secrets.PROD_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT
-              echo "🔴 Environment: prod"
+            "chevvu/prod") 
+              echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
+              echo "🔴 Environment: Production"
               ;;
-            *)
+            *) 
               echo "❌ Unknown branch: $BRANCH"
               exit 1
               ;;
           esac
-
-      - name: 🔍 Verify Outputs
-        run: |
-          echo "Environment: ${{ steps.set-env.outputs.environment }}"
-          echo "Build ID: ${{ steps.set-env.outputs.build-id }}"
-          echo "AWS Region: ${{ steps.set-env.outputs.aws-region }}"
-          echo "AWS Account: ${{ steps.set-env.outputs.aws-account }}"
-          echo "AWS Role: ${{ steps.set-env.outputs.aws-role }}"
 
   build-and-push:
     name: 🏗️ ${{ matrix.service.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [setup]
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -98,21 +86,26 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: 🔍 Debug - Verify Job Inputs
-        run: |
-          echo "Environment: ${{ needs.setup.outputs.environment }}"
-          echo "Build ID: ${{ needs.setup.outputs.build-id }}"
-          echo "AWS Region: ${{ needs.setup.outputs.aws-region }}"
-          echo "AWS Account: ${{ needs.setup.outputs.aws-account }}"
-          echo "AWS Role: ${{ needs.setup.outputs.aws-role }}"
-          echo "Role ARN: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}"
-
-      - name: 🔐 Configure AWS Credentials
+      - name: 🔐 Configure AWS Credentials (DEV)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}
-          aws-region: ${{ needs.setup.outputs.aws-region }}
-          role-duration-seconds: 3600
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
+        if: ${{ needs.setup.outputs.environment == 'dev' }}
+
+      - name: 🔐 Configure AWS Credentials (NP)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.NP_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.NP_AWS_REGION }}
+        if: ${{ needs.setup.outputs.environment == 'np' }}
+
+      - name: 🔐 Configure AWS Credentials (PROD)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.PROD_AWS_REGION }}
+        if: ${{ needs.setup.outputs.environment == 'prod' }}
 
       - name: 🔑 Login to Amazon ECR
         id: login-ecr
@@ -124,13 +117,13 @@ jobs:
       - name: 📋 Set Image Names
         id: image-names
         env:
-          ENV: ${{ needs.setup.outputs.environment }}
+          ENVIRONMENT: ${{ needs.setup.outputs.environment }}
           BUILD_ID: ${{ needs.setup.outputs.build-id }}
           SERVICE: ${{ matrix.service.name }}
         run: |
           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-          REPO_NAME="${ENV}-${SERVICE}"
-          IMAGE_TAG="${ENV}-${BUILD_ID}"
+          REPO_NAME="${ENVIRONMENT}-${SERVICE}"
+          IMAGE_TAG="${ENVIRONMENT}-${BUILD_ID}"
           
           echo "ecr-repo=${REPO_NAME}" >> $GITHUB_OUTPUT
           echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
@@ -154,11 +147,10 @@ jobs:
         env:
           REPO_NAME: ${{ steps.image-names.outputs.ecr-repo }}
         run: |
-          if ! aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ needs.setup.outputs.aws-region }} &>/dev/null; then
+          if ! aws ecr describe-repositories --repository-names "$REPO_NAME" &>/dev/null; then
             echo "📦 Creating ECR repository: $REPO_NAME"
             aws ecr create-repository \
               --repository-name "$REPO_NAME" \
-              --region ${{ needs.setup.outputs.aws-region }} \
               --image-scanning-configuration scanOnPush=true \
               --encryption-configuration encryptionType=AES256
           else
@@ -178,7 +170,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
           build-args: |
-            NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=${{ needs.setup.outputs.aws-region }}
+            NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=${{ secrets.DEV_AWS_REGION }}
             NODE_ENV=production
 
       - name: 🏗️ Build and Push Docker Image (Base Images)
@@ -200,7 +192,6 @@ jobs:
           aws ecr describe-images \
             --repository-name "${{ steps.image-names.outputs.ecr-repo }}" \
             --image-ids imageTag="${{ steps.image-names.outputs.image-tag }}" \
-            --region ${{ needs.setup.outputs.aws-region }} \
             --query 'imageDetails[0].[imageTags,imagePushedAt,imageSizeInBytes]' \
             --output table
 
@@ -227,5 +218,4 @@ jobs:
           echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **AWS Region**: ${{ needs.setup.outputs.aws-region }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ${{ needs.build-and-push.result }}" >> $GITHUB_STEP_SUMMARY
