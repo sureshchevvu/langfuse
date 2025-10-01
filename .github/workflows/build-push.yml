@@ -184,7 +184,7 @@ jobs:
           IMAGE_INFO=$(aws ecr describe-images \
             --repository-name "$REPO_NAME" \
             --image-ids imageTag="$IMAGE_TAG" \
-            --output json 2>/dev/null || echo '{"imageDetails":[]})
+            --output json 2>/dev/null || echo '{"imageDetails":[]}')
           
           # Check if image exists
           if echo "$IMAGE_INFO" | jq -e '.imageDetails | length > 0' > /dev/null; then
