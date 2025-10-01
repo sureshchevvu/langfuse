@@ -16,12 +16,13 @@ jobs:
   setup:
     name: 🔧 Environment Setup
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       environment: ${{ steps.env-config.outputs.ENVIRONMENT }}
       build-id: ${{ steps.generate-id.outputs.unique-id }}
       aws-region: ${{ steps.env-config.outputs.AWS_REGION }}
       aws-account: ${{ steps.env-config.outputs.AWS_ACCOUNT }}
-      aws-role: ${{ steps.env-config.outputs.AWS_ROLE }}  # ADD THIS
+      aws-role: ${{ steps.env-config.outputs.AWS_ROLE }}
     steps:
       - name: 🎲 Generate Build ID
         id: generate-id
@@ -40,25 +41,55 @@ jobs:
 
           case "$BRANCH" in
             "chevvu/dev")
+              AWS_REGION="${{ secrets.DEV_AWS_REGION }}"
+              AWS_ACCOUNT="${{ secrets.DEV_AWS_ACCOUNT_ID }}"
+              AWS_ROLE="${{ secrets.DEV_AWS_ROLE_NAME }}"
+              
+              if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT" ] || [ -z "$AWS_ROLE" ]; then
+                echo "❌ ERROR: Required DEV secrets are missing!"
+                echo "AWS_REGION: ${AWS_REGION:-EMPTY}"
+                echo "AWS_ACCOUNT: ${AWS_ACCOUNT:-EMPTY}"
+                echo "AWS_ROLE: ${AWS_ROLE:-EMPTY}"
+                exit 1
+              fi
+              
               echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
-              echo "AWS_REGION=${{ secrets.DEV_AWS_REGION }}" >> $GITHUB_OUTPUT
-              echo "AWS_ACCOUNT=${{ secrets.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-              echo "AWS_ROLE=${{ secrets.DEV_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT  # ADD THIS
-              echo "🔵 Environment: dev"
+              echo "AWS_REGION=$AWS_REGION" >> $GITHUB_OUTPUT
+              echo "AWS_ACCOUNT=$AWS_ACCOUNT" >> $GITHUB_OUTPUT
+              echo "AWS_ROLE=$AWS_ROLE" >> $GITHUB_OUTPUT
+              echo "🔵 Environment: dev | Region: $AWS_REGION | Account: $AWS_ACCOUNT"
               ;;
             "chevvu/np")
+              AWS_REGION="${{ secrets.NP_AWS_REGION }}"
+              AWS_ACCOUNT="${{ secrets.NP_AWS_ACCOUNT_ID }}"
+              AWS_ROLE="${{ secrets.NP_AWS_ROLE_NAME }}"
+              
+              if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT" ] || [ -z "$AWS_ROLE" ]; then
+                echo "❌ ERROR: Required NP secrets are missing!"
+                exit 1
+              fi
+              
               echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
-              echo "AWS_REGION=${{ secrets.NP_AWS_REGION }}" >> $GITHUB_OUTPUT
-              echo "AWS_ACCOUNT=${{ secrets.NP_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-              echo "AWS_ROLE=${{ secrets.NP_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT  # ADD THIS
-              echo "🟡 Environment: NP"
+              echo "AWS_REGION=$AWS_REGION" >> $GITHUB_OUTPUT
+              echo "AWS_ACCOUNT=$AWS_ACCOUNT" >> $GITHUB_OUTPUT
+              echo "AWS_ROLE=$AWS_ROLE" >> $GITHUB_OUTPUT
+              echo "🟡 Environment: NP | Region: $AWS_REGION | Account: $AWS_ACCOUNT"
               ;;
             "chevvu/prod")
+              AWS_REGION="${{ secrets.PROD_AWS_REGION }}"
+              AWS_ACCOUNT="${{ secrets.PROD_AWS_ACCOUNT_ID }}"
+              AWS_ROLE="${{ secrets.PROD_AWS_ROLE_NAME }}"
+              
+              if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT" ] || [ -z "$AWS_ROLE" ]; then
+                echo "❌ ERROR: Required PROD secrets are missing!"
+                exit 1
+              fi
+              
               echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
-              echo "AWS_REGION=${{ secrets.PROD_AWS_REGION }}" >> $GITHUB_OUTPUT
-              echo "AWS_ACCOUNT=${{ secrets.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-              echo "AWS_ROLE=${{ secrets.PROD_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT  # ADD THIS
-              echo "🔴 Environment: Production"
+              echo "AWS_REGION=$AWS_REGION" >> $GITHUB_OUTPUT
+              echo "AWS_ACCOUNT=$AWS_ACCOUNT" >> $GITHUB_OUTPUT
+              echo "AWS_ROLE=$AWS_ROLE" >> $GITHUB_OUTPUT
+              echo "🔴 Environment: Production | Region: $AWS_REGION | Account: $AWS_ACCOUNT"
               ;;
             *)
               echo "❌ Unknown branch: $BRANCH"
@@ -67,43 +98,39 @@ jobs:
           esac
 
   build-and-push:
-    name: 🏗️ Build & Push All Services
+    name: 🏗️ ${{ matrix.service.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [setup]
     strategy:
+      fail-fast: false
       matrix:
         service:
           - name: langfuse-web
-            dockerfile: ./web/Dockerfile
+            dockerfile: ./Dockerfile
             context: .
           - name: langfuse-worker
-            dockerfile: ./worker/Dockerfile
+            dockerfile: ./Dockerfile
             context: .
           - name: langfuse-postgres
-            dockerfile: ./postgres/Dockerfile
-            context: ./postgres
             base-image: postgres:17
           - name: langfuse-redis
-            dockerfile: ./redis/Dockerfile
-            context: ./redis
             base-image: redis:7
           - name: langfuse-minio
-            dockerfile: ./minio/Dockerfile
-            context: ./minio
-            base-image: minio/minio
+            base-image: minio/minio:latest
           - name: langfuse-clickhouse
-            dockerfile: ./clickhouse/Dockerfile
-            context: ./clickhouse
-            base-image: clickhouse/clickhouse-server
+            base-image: clickhouse/clickhouse-server:latest
     
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}  # CHANGE THIS
+          role-to-assume: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}
           aws-region: ${{ needs.setup.outputs.aws-region }}
           role-duration-seconds: 3600
 
@@ -129,12 +156,14 @@ jobs:
           echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "full-image=${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "latest-image=${ECR_REGISTRY}/${REPO_NAME}:latest" >> $GITHUB_OUTPUT
+          
+          echo "📦 Building: ${REPO_NAME}:${IMAGE_TAG}"
 
-      - name: 📦 Create Dockerfile if Base Image
+      - name: 📦 Create Dockerfile for Base Images
         if: matrix.service.base-image
         run: |
-          mkdir -p ${{ matrix.service.context }}
-          cat > ${{ matrix.service.dockerfile }} <<EOF
+          mkdir -p ./temp-${{ matrix.service.name }}
+          cat > ./temp-${{ matrix.service.name }}/Dockerfile <<'EOF'
           FROM ${{ matrix.service.base-image }}
           LABEL service="${{ matrix.service.name }}"
           LABEL environment="${{ needs.setup.outputs.environment }}"
@@ -145,9 +174,7 @@ jobs:
         env:
           REPO_NAME: ${{ steps.image-names.outputs.ecr-repo }}
         run: |
-          set +e
-          aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ needs.setup.outputs.aws-region }} >/dev/null 2>&1
-          if [ $? -ne 0 ]; then
+          if ! aws ecr describe-repositories --repository-names "$REPO_NAME" --region ${{ needs.setup.outputs.aws-region }} &>/dev/null; then
             echo "📦 Creating ECR repository: $REPO_NAME"
             aws ecr create-repository \
               --repository-name "$REPO_NAME" \
@@ -157,9 +184,9 @@ jobs:
           else
             echo "✅ ECR repository exists: $REPO_NAME"
           fi
-          set -e
 
-      - name: 🏗️ Build and Push Docker Image
+      - name: 🏗️ Build and Push Docker Image (App Services)
+        if: ${{ !matrix.service.base-image }}
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.service.context }}
@@ -168,20 +195,31 @@ jobs:
           tags: |
             ${{ steps.image-names.outputs.full-image }}
             ${{ steps.image-names.outputs.latest-image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
           build-args: |
             NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=${{ needs.setup.outputs.aws-region }}
+            NODE_ENV=production
+
+      - name: 🏗️ Build and Push Docker Image (Base Images)
+        if: matrix.service.base-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./temp-${{ matrix.service.name }}
+          file: ./temp-${{ matrix.service.name }}/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image-names.outputs.full-image }}
+            ${{ steps.image-names.outputs.latest-image }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
 
       - name: ✅ Verify Image Push
-        env:
-          REPO_NAME: ${{ steps.image-names.outputs.ecr-repo }}
-          IMAGE_TAG: ${{ steps.image-names.outputs.image-tag }}
         run: |
           echo "🔍 Verifying image in ECR..."
           aws ecr describe-images \
-            --repository-name "$REPO_NAME" \
-            --image-ids imageTag="$IMAGE_TAG" \
+            --repository-name "${{ steps.image-names.outputs.ecr-repo }}" \
+            --image-ids imageTag="${{ steps.image-names.outputs.image-tag }}" \
             --region ${{ needs.setup.outputs.aws-region }} \
             --query 'imageDetails[0].[imageTags,imagePushedAt,imageSizeInBytes]' \
             --output table
@@ -210,21 +248,4 @@ jobs:
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **AWS Region**: ${{ needs.setup.outputs.aws-region }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🐳 Built Services" >> $GITHUB_STEP_SUMMARY
-          echo "- langfuse-web" >> $GITHUB_STEP_SUMMARY
-          echo "- langfuse-worker" >> $GITHUB_STEP_SUMMARY
-          echo "- langfuse-postgres" >> $GITHUB_STEP_SUMMARY
-          echo "- langfuse-redis" >> $GITHUB_STEP_SUMMARY
-          echo "- langfuse-minio" >> $GITHUB_STEP_SUMMARY
-          echo "- langfuse-clickhouse" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 ECR Repositories" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.setup.outputs.environment }}-langfuse-web" >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.setup.outputs.environment }}-langfuse-worker" >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.setup.outputs.environment }}-langfuse-postgres" >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.setup.outputs.environment }}-langfuse-redis" >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.setup.outputs.environment }}-langfuse-minio" >> $GITHUB_STEP_SUMMARY
-          echo "${{ needs.setup.outputs.environment }}-langfuse-clickhouse" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ needs.build-and-push.result }}" >> $GITHUB_STEP_SUMMARY
