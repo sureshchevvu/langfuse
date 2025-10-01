@@ -66,10 +66,10 @@ jobs:
       matrix:
         service:
           - name: langfuse-web
-            dockerfile: ./Dockerfile
+            dockerfile: ./web/Dockerfile
             context: .
           - name: langfuse-worker
-            dockerfile: ./Dockerfile
+            dockerfile: ./worker/Dockerfile
             context: .
           - name: langfuse-postgres
             base-image: postgres:17
