@@ -18,101 +18,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      environment: ${{ steps.env-config.outputs.ENVIRONMENT }}
-      build-id: ${{ steps.generate-id.outputs.unique-id }}
-      aws-region: ${{ steps.env-config.outputs.AWS_REGION }}
-      aws-account: ${{ steps.env-config.outputs.AWS_ACCOUNT }}
-      aws-role: ${{ steps.env-config.outputs.AWS_ROLE }}
+      environment: ${{ steps.set-env.outputs.environment }}
+      build-id: ${{ steps.set-env.outputs.build-id }}
+      aws-region: ${{ steps.set-env.outputs.aws-region }}
+      aws-account: ${{ steps.set-env.outputs.aws-account }}
+      aws-role: ${{ steps.set-env.outputs.aws-role }}
     steps:
-      - name: 🎲 Generate Build ID
-        id: generate-id
+      - name: 🔧 Set Environment Variables
+        id: set-env
         run: |
           BUILD_ID="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
-          echo "unique-id=$BUILD_ID" >> $GITHUB_OUTPUT
-          echo "✅ Generated Build ID: $BUILD_ID"
-
-      - name: 🔍 Debug - Check Secrets Availability
-        run: |
-          echo "Branch: ${{ github.ref_name }}"
-          echo "DEV_AWS_REGION set: ${{ secrets.DEV_AWS_REGION != '' }}"
-          echo "DEV_AWS_ACCOUNT_ID set: ${{ secrets.DEV_AWS_ACCOUNT_ID != '' }}"
-          echo "DEV_AWS_ROLE_NAME set: ${{ secrets.DEV_AWS_ROLE_NAME != '' }}"
-
-      - name: 🔧 Determine Environment
-        id: env-config
-        shell: bash
-        env:
-          BRANCH: ${{ github.ref_name }}
-          DEV_AWS_REGION: ${{ secrets.DEV_AWS_REGION }}
-          DEV_AWS_ACCOUNT_ID: ${{ secrets.DEV_AWS_ACCOUNT_ID }}
-          DEV_AWS_ROLE_NAME: ${{ secrets.DEV_AWS_ROLE_NAME }}
-          NP_AWS_REGION: ${{ secrets.NP_AWS_REGION }}
-          NP_AWS_ACCOUNT_ID: ${{ secrets.NP_AWS_ACCOUNT_ID }}
-          NP_AWS_ROLE_NAME: ${{ secrets.NP_AWS_ROLE_NAME }}
-          PROD_AWS_REGION: ${{ secrets.PROD_AWS_REGION }}
-          PROD_AWS_ACCOUNT_ID: ${{ secrets.PROD_AWS_ACCOUNT_ID }}
-          PROD_AWS_ROLE_NAME: ${{ secrets.PROD_AWS_ROLE_NAME }}
-        run: |
-          set -euo pipefail
-          echo "🌿 Push branch: $BRANCH"
-
+          BRANCH="${{ github.ref_name }}"
+          
+          echo "build-id=${BUILD_ID}" >> $GITHUB_OUTPUT
+          
           case "$BRANCH" in
             "chevvu/dev")
-              AWS_REGION="$DEV_AWS_REGION"
-              AWS_ACCOUNT="$DEV_AWS_ACCOUNT_ID"
-              AWS_ROLE="$DEV_AWS_ROLE_NAME"
-              
-              if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT" ] || [ -z "$AWS_ROLE" ]; then
-                echo "❌ ERROR: Required DEV secrets are missing!"
-                echo "AWS_REGION: ${AWS_REGION:-EMPTY}"
-                echo "AWS_ACCOUNT: ${AWS_ACCOUNT:-EMPTY}"
-                echo "AWS_ROLE: ${AWS_ROLE:-EMPTY}"
-                exit 1
-              fi
-              
-              echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
-              echo "AWS_REGION=$AWS_REGION" >> $GITHUB_OUTPUT
-              echo "AWS_ACCOUNT=$AWS_ACCOUNT" >> $GITHUB_OUTPUT
-              echo "AWS_ROLE=$AWS_ROLE" >> $GITHUB_OUTPUT
-              echo "🔵 Environment: dev | Region: $AWS_REGION | Account: $AWS_ACCOUNT"
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              echo "aws-region=${{ secrets.DEV_AWS_REGION }}" >> $GITHUB_OUTPUT
+              echo "aws-account=${{ secrets.DEV_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
+              echo "aws-role=${{ secrets.DEV_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT
+              echo "🔵 Environment: dev"
               ;;
             "chevvu/np")
-              AWS_REGION="$NP_AWS_REGION"
-              AWS_ACCOUNT="$NP_AWS_ACCOUNT_ID"
-              AWS_ROLE="$NP_AWS_ROLE_NAME"
-              
-              if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT" ] || [ -z "$AWS_ROLE" ]; then
-                echo "❌ ERROR: Required NP secrets are missing!"
-                exit 1
-              fi
-              
-              echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
-              echo "AWS_REGION=$AWS_REGION" >> $GITHUB_OUTPUT
-              echo "AWS_ACCOUNT=$AWS_ACCOUNT" >> $GITHUB_OUTPUT
-              echo "AWS_ROLE=$AWS_ROLE" >> $GITHUB_OUTPUT
-              echo "🟡 Environment: NP | Region: $AWS_REGION | Account: $AWS_ACCOUNT"
+              echo "environment=np" >> $GITHUB_OUTPUT
+              echo "aws-region=${{ secrets.NP_AWS_REGION }}" >> $GITHUB_OUTPUT
+              echo "aws-account=${{ secrets.NP_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
+              echo "aws-role=${{ secrets.NP_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT
+              echo "🟡 Environment: np"
               ;;
             "chevvu/prod")
-              AWS_REGION="$PROD_AWS_REGION"
-              AWS_ACCOUNT="$PROD_AWS_ACCOUNT_ID"
-              AWS_ROLE="$PROD_AWS_ROLE_NAME"
-              
-              if [ -z "$AWS_REGION" ] || [ -z "$AWS_ACCOUNT" ] || [ -z "$AWS_ROLE" ]; then
-                echo "❌ ERROR: Required PROD secrets are missing!"
-                exit 1
-              fi
-              
-              echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
-              echo "AWS_REGION=$AWS_REGION" >> $GITHUB_OUTPUT
-              echo "AWS_ACCOUNT=$AWS_ACCOUNT" >> $GITHUB_OUTPUT
-              echo "AWS_ROLE=$AWS_ROLE" >> $GITHUB_OUTPUT
-              echo "🔴 Environment: Production | Region: $AWS_REGION | Account: $AWS_ACCOUNT"
+              echo "environment=prod" >> $GITHUB_OUTPUT
+              echo "aws-region=${{ secrets.PROD_AWS_REGION }}" >> $GITHUB_OUTPUT
+              echo "aws-account=${{ secrets.PROD_AWS_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
+              echo "aws-role=${{ secrets.PROD_AWS_ROLE_NAME }}" >> $GITHUB_OUTPUT
+              echo "🔴 Environment: prod"
               ;;
             *)
               echo "❌ Unknown branch: $BRANCH"
               exit 1
               ;;
           esac
+
+      - name: 🔍 Verify Outputs
+        run: |
+          echo "Environment: ${{ steps.set-env.outputs.environment }}"
+          echo "Build ID: ${{ steps.set-env.outputs.build-id }}"
+          echo "AWS Region: ${{ steps.set-env.outputs.aws-region }}"
+          echo "AWS Account: ${{ steps.set-env.outputs.aws-account }}"
+          echo "AWS Role: ${{ steps.set-env.outputs.aws-role }}"
 
   build-and-push:
     name: 🏗️ ${{ matrix.service.name }}
@@ -147,10 +101,11 @@ jobs:
       - name: 🔍 Debug - Verify Job Inputs
         run: |
           echo "Environment: ${{ needs.setup.outputs.environment }}"
+          echo "Build ID: ${{ needs.setup.outputs.build-id }}"
           echo "AWS Region: ${{ needs.setup.outputs.aws-region }}"
           echo "AWS Account: ${{ needs.setup.outputs.aws-account }}"
           echo "AWS Role: ${{ needs.setup.outputs.aws-role }}"
-          echo "Role ARN will be: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}"
+          echo "Role ARN: arn:aws:iam::${{ needs.setup.outputs.aws-account }}:role/${{ needs.setup.outputs.aws-role }}"
 
       - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
