@@ -86,26 +86,11 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: 🔐 Configure AWS Credentials (DEV)
+      - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.DEV_AWS_REGION }}
-        if: ${{ needs.setup.outputs.environment == 'dev' }}
-
-      - name: 🔐 Configure AWS Credentials (NP)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.NP_AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.NP_AWS_REGION }}
-        if: ${{ needs.setup.outputs.environment == 'np' }}
-
-      - name: 🔐 Configure AWS Credentials (PROD)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.PROD_AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.PROD_AWS_REGION }}
-        if: ${{ needs.setup.outputs.environment == 'prod' }}
+          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
+          aws-region: us-east-1
 
       - name: 🔑 Login to Amazon ECR
         id: login-ecr
@@ -170,7 +155,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
           build-args: |
-            NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=${{ secrets.DEV_AWS_REGION }}
+            NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=us-east-1
             NODE_ENV=production
 
       - name: 🏗️ Build and Push Docker Image (Base Images)
