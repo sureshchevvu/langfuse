@@ -82,8 +82,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
 
       - name: Get image URI
         id: image
@@ -91,9 +91,8 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION=$(aws configure get region || echo "us-east-1")
           ENV="${{ env.ENVIRONMENT }}"
-          TAG="${{ env.IMAGE_TAG }}"
           REPO="${ENV}-langfuse-redis"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${ENV}-${TAG}"
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
           echo "📦 Redis Image: $IMAGE"
 
@@ -104,17 +103,17 @@ jobs:
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.DEV_LANGFUSE_REDIS_SERVICE }}"
+              SERVICE="${{ secrets.DEV_REDIS_SERVICE }}"
               REDIS_SECRET_ARN="${{ secrets.DEV_REDIS_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.NP_LANGFUSE_REDIS_SERVICE }}"
+              SERVICE="${{ secrets.NP_REDIS_SERVICE }}"
               REDIS_SECRET_ARN="${{ secrets.NP_REDIS_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.PROD_LANGFUSE_REDIS_SERVICE }}"
+              SERVICE="${{ secrets.PROD_REDIS_SERVICE }}"
               REDIS_SECRET_ARN="${{ secrets.PROD_REDIS_SECRET_ARN }}"
               ;;
           esac
@@ -244,8 +243,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
 
       - name: Get image URI
         id: image
@@ -253,9 +252,8 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION=$(aws configure get region || echo "us-east-1")
           ENV="${{ env.ENVIRONMENT }}"
-          TAG="${{ env.IMAGE_TAG }}"
           REPO="${ENV}-langfuse-clickhouse"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${ENV}-${TAG}"
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
           echo "📦 ClickHouse Image: $IMAGE"
 
@@ -266,17 +264,17 @@ jobs:
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.DEV_LANGFUSE_CLICKHOUSE_SERVICE }}"
+              SERVICE="${{ secrets.DEV_CLICKHOUSE_SERVICE }}"
               CH_SECRET_ARN="${{ secrets.DEV_CLICKHOUSE_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.NP_LANGFUSE_CLICKHOUSE_SERVICE }}"
+              SERVICE="${{ secrets.NP_CLICKHOUSE_SERVICE }}"
               CH_SECRET_ARN="${{ secrets.NP_CLICKHOUSE_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.PROD_LANGFUSE_CLICKHOUSE_SERVICE }}"
+              SERVICE="${{ secrets.PROD_CLICKHOUSE_SERVICE }}"
               CH_SECRET_ARN="${{ secrets.PROD_CLICKHOUSE_SECRET_ARN }}"
               ;;
           esac
@@ -414,8 +412,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
 
       - name: Get image URI
         id: image
@@ -423,9 +421,8 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION=$(aws configure get region || echo "us-east-1")
           ENV="${{ env.ENVIRONMENT }}"
-          TAG="${{ env.IMAGE_TAG }}"
           REPO="${ENV}-langfuse-minio"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${ENV}-${TAG}"
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
           echo "📦 MinIO Image: $IMAGE"
 
@@ -436,17 +433,17 @@ jobs:
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.DEV_LANGFUSE_MINIO_SERVICE }}"
+              SERVICE="${{ secrets.DEV_MINIO_SERVICE }}"
               S3_SECRET_ARN="${{ secrets.DEV_S3_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.NP_LANGFUSE_MINIO_SERVICE }}"
+              SERVICE="${{ secrets.NP_MINIO_SERVICE }}"
               S3_SECRET_ARN="${{ secrets.NP_S3_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.PROD_LANGFUSE_MINIO_SERVICE }}"
+              SERVICE="${{ secrets.PROD_MINIO_SERVICE }}"
               S3_SECRET_ARN="${{ secrets.PROD_S3_SECRET_ARN }}"
               ;;
           esac
@@ -583,8 +580,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
 
       - name: Get image URI
         id: image
@@ -592,9 +589,8 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION=$(aws configure get region || echo "us-east-1")
           ENV="${{ env.ENVIRONMENT }}"
-          TAG="${{ env.IMAGE_TAG }}"
           REPO="${ENV}-langfuse-web"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${ENV}-${TAG}"
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
           echo "📦 Web Image: $IMAGE"
 
@@ -607,7 +603,7 @@ jobs:
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.DEV_LANGFUSE_WEB_SERVICE }}"
+              SERVICE="${{ secrets.DEV_WEB_SERVICE }}"
               DB_SECRET_ARN="arn:aws:secretsmanager:us-east-1:203874373410:secret:dev/langfuse/database-url-TrrygY"
               ENCRYPTION_SECRET_ARN="${{ secrets.DEV_ENCRYPTION_SECRET_ARN }}"
               NEXTAUTH_SECRET_ARN="${{ secrets.DEV_NEXTAUTH_SECRET_ARN }}"
@@ -617,7 +613,7 @@ jobs:
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.NP_LANGFUSE_WEB_SERVICE }}"
+              SERVICE="${{ secrets.NP_WEB_SERVICE }}"
               DB_SECRET_ARN="${{ secrets.NP_DATABASE_URL_SECRET_ARN }}"
               ENCRYPTION_SECRET_ARN="${{ secrets.NP_ENCRYPTION_SECRET_ARN }}"
               NEXTAUTH_SECRET_ARN="${{ secrets.NP_NEXTAUTH_SECRET_ARN }}"
@@ -627,7 +623,7 @@ jobs:
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.PROD_LANGFUSE_WEB_SERVICE }}"
+              SERVICE="${{ secrets.PROD_WEB_SERVICE }}"
               DB_SECRET_ARN="${{ secrets.PROD_DATABASE_URL_SECRET_ARN }}"
               ENCRYPTION_SECRET_ARN="${{ secrets.PROD_ENCRYPTION_SECRET_ARN }}"
               NEXTAUTH_SECRET_ARN="${{ secrets.PROD_NEXTAUTH_SECRET_ARN }}"
@@ -766,8 +762,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
 
       - name: Get image URI
         id: image
@@ -775,9 +771,8 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REGION=$(aws configure get region || echo "us-east-1")
           ENV="${{ env.ENVIRONMENT }}"
-          TAG="${{ env.IMAGE_TAG }}"
           REPO="${ENV}-langfuse-worker"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${ENV}-${TAG}"
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
           echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
           echo "📦 Worker Image: $IMAGE"
 
@@ -790,7 +785,7 @@ jobs:
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.DEV_LANGFUSE_WORKER_SERVICE }}"
+              SERVICE="${{ secrets.DEV_WORKER_SERVICE }}"
               DB_SECRET_ARN="arn:aws:secretsmanager:us-east-1:203874373410:secret:dev/langfuse/database-url-TrrygY"
               ENCRYPTION_SECRET_ARN="${{ secrets.DEV_ENCRYPTION_SECRET_ARN }}"
               NEXTAUTH_SECRET_ARN="${{ secrets.DEV_NEXTAUTH_SECRET_ARN }}"
@@ -800,7 +795,7 @@ jobs:
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.NP_LANGFUSE_WORKER_SERVICE }}"
+              SERVICE="${{ secrets.NP_WORKER_SERVICE }}"
               DB_SECRET_ARN="${{ secrets.NP_DATABASE_URL_SECRET_ARN }}"
               ENCRYPTION_SECRET_ARN="${{ secrets.NP_ENCRYPTION_SECRET_ARN }}"
               NEXTAUTH_SECRET_ARN="${{ secrets.NP_NEXTAUTH_SECRET_ARN }}"
@@ -810,7 +805,7 @@ jobs:
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
-              SERVICE="${{ secrets.PROD_LANGFUSE_WORKER_SERVICE }}"
+              SERVICE="${{ secrets.PROD_WORKER_SERVICE }}"
               DB_SECRET_ARN="${{ secrets.PROD_DATABASE_URL_SECRET_ARN }}"
               ENCRYPTION_SECRET_ARN="${{ secrets.PROD_ENCRYPTION_SECRET_ARN }}"
               NEXTAUTH_SECRET_ARN="${{ secrets.PROD_NEXTAUTH_SECRET_ARN }}"
