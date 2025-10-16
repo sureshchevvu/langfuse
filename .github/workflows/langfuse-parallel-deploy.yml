@@ -675,33 +675,21 @@ jobs:
             exit 1
           fi
           
-          # Parse env file to JSON
-          python3 - <<'PY'
-import os, json
-f=open(os.environ['ENV_FILE'])
-items=[]
-for line in f:
-    line=line.strip()
-    if not line or line.startswith('#'): continue
-    if '=' not in line: continue
-    k,v=line.split('=',1)
-    if v.strip():
-        items.append({"name":k.strip(),"value":v.strip()})
-print(json.dumps(items))
-PY
-          ENV_FILE="$ENV_FILE" python3 - > env_vars.json <<'PY'
-import os, json
-f=open(os.environ['ENV_FILE'])
-items=[]
-for line in f:
-    line=line.strip()
-    if not line or line.startswith('#'): continue
-    if '=' not in line: continue
-    k,v=line.split('=',1)
-    if v.strip():
-        items.append({"name":k.strip(),"value":v.strip()})
-print(json.dumps(items))
-PY
+          # Parse env file to JSON - filter out comments and empty lines
+          echo "[]" > env_vars.json
+          while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            if [[ "$key" =~ ^#.* ]] || [ -z "$key" ]; then
+              continue
+            fi
+            # Skip if no value
+            if [ -z "$value" ]; then
+              continue
+            fi
+            # Add to JSON array
+            jq --arg k "$key" --arg v "$value" '. += [{"name": $k, "value": $v}]' env_vars.json > env_vars_tmp.json
+            mv env_vars_tmp.json env_vars.json
+          done < "$ENV_FILE"
           
           echo "✅ Loaded environment variables"
 
@@ -870,19 +858,21 @@ PY
             exit 1
           fi
           
-          ENV_FILE="$ENV_FILE" python3 - > env_vars.json <<'PY'
-import os, json
-f=open(os.environ['ENV_FILE'])
-items=[]
-for line in f:
-    line=line.strip()
-    if not line or line.startswith('#'): continue
-    if '=' not in line: continue
-    k,v=line.split('=',1)
-    if v.strip():
-        items.append({"name":k.strip(),"value":v.strip()})
-print(json.dumps(items))
-PY
+          # Parse env file to JSON - filter out comments and empty lines
+          echo "[]" > env_vars.json
+          while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            if [[ "$key" =~ ^#.* ]] || [ -z "$key" ]; then
+              continue
+            fi
+            # Skip if no value
+            if [ -z "$value" ]; then
+              continue
+            fi
+            # Add to JSON array
+            jq --arg k "$key" --arg v "$value" '. += [{"name": $k, "value": $v}]' env_vars.json > env_vars_tmp.json
+            mv env_vars_tmp.json env_vars.json
+          done < "$ENV_FILE"
           
           echo "✅ Loaded environment variables"
 

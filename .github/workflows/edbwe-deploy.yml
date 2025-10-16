@@ -1,385 +1,385 @@
-name: Langfuse ECS Deploy
+# name: Langfuse ECS Deploy
 
-on:
-  push:
-    branches:
-      - chevvu/dev
-      - chevvu/np
-      - chevvu/prod
-    paths-ignore:
-      - "**/*.md"
-      - ".gitignore"
-      - "*.config.js"
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        type: choice
-        options:
-          - dev
-          - np
-          - prod
+# on:
+#   push:
+#     branches:
+#       - chevvu/dev
+#       - chevvu/np
+#       - chevvu/prod
+#     paths-ignore:
+#       - "**/*.md"
+#       - ".gitignore"
+#       - "*.config.js"
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: 'Environment to deploy to'
+#         required: true
+#         type: choice
+#         options:
+#           - dev
+#           - np
+#           - prod
 
-jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      env: ${{ steps.env.outputs.ENVIRONMENT }}
-      image-tag: ${{ steps.tag.outputs.IMAGE_TAG }}
-      branch: ${{ steps.env.outputs.BRANCH }}
-    steps:
-      - name: Determine environment
-        id: env
-        run: |
-          # Support both push and workflow_dispatch triggers
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ENV="${{ inputs.environment }}"
-            BRANCH="chevvu/${ENV}"
-            echo "ENVIRONMENT=${ENV}" >> $GITHUB_OUTPUT
-            echo "BRANCH=${BRANCH}" >> $GITHUB_OUTPUT
-            echo "🎯 Manual deployment to ${ENV} environment"
-          else
-            BR="${{ github.ref_name }}"
-            case "$BR" in
-              "chevvu/dev")
-                echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
-                echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
-                ;;
-              "chevvu/np")
-                echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
-                echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
-                ;;
-              "chevvu/prod")
-                echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
-                echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
-                ;;
-              *)
-                echo "❌ Unknown branch $BR"
-                exit 1
-                ;;
-            esac
-            echo "🚀 Automatic deployment from branch ${BR}"
-          fi
+# jobs:
+#   prepare:
+#     runs-on: ubuntu-latest
+#     outputs:
+#       env: ${{ steps.env.outputs.ENVIRONMENT }}
+#       image-tag: ${{ steps.tag.outputs.IMAGE_TAG }}
+#       branch: ${{ steps.env.outputs.BRANCH }}
+#     steps:
+#       - name: Determine environment
+#         id: env
+#         run: |
+#           # Support both push and workflow_dispatch triggers
+#           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+#             ENV="${{ inputs.environment }}"
+#             BRANCH="chevvu/${ENV}"
+#             echo "ENVIRONMENT=${ENV}" >> $GITHUB_OUTPUT
+#             echo "BRANCH=${BRANCH}" >> $GITHUB_OUTPUT
+#             echo "🎯 Manual deployment to ${ENV} environment"
+#           else
+#             BR="${{ github.ref_name }}"
+#             case "$BR" in
+#               "chevvu/dev")
+#                 echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
+#                 echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
+#                 ;;
+#               "chevvu/np")
+#                 echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
+#                 echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
+#                 ;;
+#               "chevvu/prod")
+#                 echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
+#                 echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
+#                 ;;
+#               *)
+#                 echo "❌ Unknown branch $BR"
+#                 exit 1
+#                 ;;
+#             esac
+#             echo "🚀 Automatic deployment from branch ${BR}"
+#           fi
 
-      - name: Compute image tag
-        id: tag
-        run: |
-          IMAGE_TAG="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
+#       - name: Compute image tag
+#         id: tag
+#         run: |
+#           IMAGE_TAG="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
+#           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-  deploy:
-    name: Deploy langfuse to ECS
-    needs: prepare
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    env:
-      ENVIRONMENT: ${{ needs.prepare.outputs.env }}
-      IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+#   deploy:
+#     name: Deploy langfuse to ECS
+#     needs: prepare
+#     runs-on: ubuntu-latest
+#     permissions:
+#       id-token: write
+#       contents: read
+#     env:
+#       ENVIRONMENT: ${{ needs.prepare.outputs.env }}
+#       IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
+#           aws-region: us-east-1
 
-      - name: Get AWS account id and build image URIs
-        id: imgs
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region || echo "us-east-1")
-          ENV="${{ env.ENVIRONMENT }}"
-          TAG="${{ env.IMAGE_TAG }}"
+#       - name: Get AWS account id and build image URIs
+#         id: imgs
+#         run: |
+#           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+#           REGION=$(aws configure get region || echo "us-east-1")
+#           ENV="${{ env.ENVIRONMENT }}"
+#           TAG="${{ env.IMAGE_TAG }}"
 
-          WEB_REPO="${ENV}-langfuse-web"
-          WORKER_REPO="${ENV}-langfuse-worker"
+#           WEB_REPO="${ENV}-langfuse-web"
+#           WORKER_REPO="${ENV}-langfuse-worker"
 
-          WEB_IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${WEB_REPO}:${ENV}-${TAG}"
-          WORKER_IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${WORKER_REPO}:${ENV}-${TAG}"
+#           WEB_IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${WEB_REPO}:${ENV}-${TAG}"
+#           WORKER_IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${WORKER_REPO}:${ENV}-${TAG}"
 
-          echo "WEB_IMAGE=$WEB_IMAGE" >> $GITHUB_OUTPUT
-          echo "WORKER_IMAGE=$WORKER_IMAGE" >> $GITHUB_OUTPUT
-          echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_OUTPUT
-          echo "REGION=$REGION" >> $GITHUB_OUTPUT
+#           echo "WEB_IMAGE=$WEB_IMAGE" >> $GITHUB_OUTPUT
+#           echo "WORKER_IMAGE=$WORKER_IMAGE" >> $GITHUB_OUTPUT
+#           echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+#           echo "REGION=$REGION" >> $GITHUB_OUTPUT
 
-      - name: Load per-branch env file and build secrets JSON
-        id: build-env
-        run: |
-          set -euo pipefail
-          BRANCH="${{ needs.prepare.outputs.branch }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          ENV_FILE=".github/envs/${BRANCH}.env"
+#       - name: Load per-branch env file and build secrets JSON
+#         id: build-env
+#         run: |
+#           set -euo pipefail
+#           BRANCH="${{ needs.prepare.outputs.branch }}"
+#           ENV="${{ env.ENVIRONMENT }}"
+#           ENV_FILE=".github/envs/${BRANCH}.env"
 
-          echo "📂 Looking for environment file: $ENV_FILE"
+#           echo "📂 Looking for environment file: $ENV_FILE"
           
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "❌ Env file not found: $ENV_FILE"
-            echo "💡 Create .github/envs/${BRANCH}.env with KEY=VALUE lines"
-            echo "Available files:"
-            ls -la .github/envs/ || true
-            exit 1
-          fi
+#           if [ ! -f "$ENV_FILE" ]; then
+#             echo "❌ Env file not found: $ENV_FILE"
+#             echo "💡 Create .github/envs/${BRANCH}.env with KEY=VALUE lines"
+#             echo "Available files:"
+#             ls -la .github/envs/ || true
+#             exit 1
+#           fi
           
-          echo "✅ Found environment file"
+#           echo "✅ Found environment file"
 
-          # Parse KEY=VALUE lines into JSON array for environment variables (non-sensitive)
-          ENV_VARS_JSON=$(python3 - <<'PY'
-import os, json
-f=open(os.environ['ENV_FILE'])
-items=[]
-for line in f:
-    line=line.strip()
-    if not line or line.startswith('#'): continue
-    if '=' not in line: continue
-    k,v=line.split('=',1)
-    # Only include non-empty values (secrets will be injected separately)
-    if v.strip():
-        items.append({"name":k.strip(),"value":v.strip()})
-print(json.dumps(items))
-PY
-          )
+#           # Parse KEY=VALUE lines into JSON array for environment variables (non-sensitive)
+#           ENV_VARS_JSON=$(python3 - <<'PY'
+# import os, json
+# f=open(os.environ['ENV_FILE'])
+# items=[]
+# for line in f:
+#     line=line.strip()
+#     if not line or line.startswith('#'): continue
+#     if '=' not in line: continue
+#     k,v=line.split('=',1)
+#     # Only include non-empty values (secrets will be injected separately)
+#     if v.strip():
+#         items.append({"name":k.strip(),"value":v.strip()})
+# print(json.dumps(items))
+# PY
+#           )
 
-          echo "$ENV_VARS_JSON" > env_vars.json
-          echo "✅ Wrote env_vars.json (non-sensitive env variables)"
+#           echo "$ENV_VARS_JSON" > env_vars.json
+#           echo "✅ Wrote env_vars.json (non-sensitive env variables)"
 
-          # Map all secret ARNs per environment
-          case "$ENV" in
-            dev)
-              DB_SECRET_ARN="${{ secrets.DEV_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.DEV_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.DEV_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.DEV_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.DEV_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.DEV_S3_SECRET_ARN }}"
-              ;;
-            np)
-              DB_SECRET_ARN="${{ secrets.NP_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.NP_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.NP_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.NP_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.NP_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.NP_S3_SECRET_ARN }}"
-              ;;
-            prod)
-              DB_SECRET_ARN="${{ secrets.PROD_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.PROD_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.PROD_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.PROD_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.PROD_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.PROD_S3_SECRET_ARN }}"
-              ;;
-            *)
-              echo "❌ Unknown environment: $ENV"
-              exit 1
-              ;;
-          esac
+#           # Map all secret ARNs per environment
+#           case "$ENV" in
+#             dev)
+#               DB_SECRET_ARN="${{ secrets.DEV_DATABASE_URL_SECRET_ARN }}"
+#               ENCRYPTION_SECRET_ARN="${{ secrets.DEV_ENCRYPTION_SECRET_ARN }}"
+#               NEXTAUTH_SECRET_ARN="${{ secrets.DEV_NEXTAUTH_SECRET_ARN }}"
+#               REDIS_SECRET_ARN="${{ secrets.DEV_REDIS_SECRET_ARN }}"
+#               CLICKHOUSE_SECRET_ARN="${{ secrets.DEV_CLICKHOUSE_SECRET_ARN }}"
+#               S3_SECRET_ARN="${{ secrets.DEV_S3_SECRET_ARN }}"
+#               ;;
+#             np)
+#               DB_SECRET_ARN="${{ secrets.NP_DATABASE_URL_SECRET_ARN }}"
+#               ENCRYPTION_SECRET_ARN="${{ secrets.NP_ENCRYPTION_SECRET_ARN }}"
+#               NEXTAUTH_SECRET_ARN="${{ secrets.NP_NEXTAUTH_SECRET_ARN }}"
+#               REDIS_SECRET_ARN="${{ secrets.NP_REDIS_SECRET_ARN }}"
+#               CLICKHOUSE_SECRET_ARN="${{ secrets.NP_CLICKHOUSE_SECRET_ARN }}"
+#               S3_SECRET_ARN="${{ secrets.NP_S3_SECRET_ARN }}"
+#               ;;
+#             prod)
+#               DB_SECRET_ARN="${{ secrets.PROD_DATABASE_URL_SECRET_ARN }}"
+#               ENCRYPTION_SECRET_ARN="${{ secrets.PROD_ENCRYPTION_SECRET_ARN }}"
+#               NEXTAUTH_SECRET_ARN="${{ secrets.PROD_NEXTAUTH_SECRET_ARN }}"
+#               REDIS_SECRET_ARN="${{ secrets.PROD_REDIS_SECRET_ARN }}"
+#               CLICKHOUSE_SECRET_ARN="${{ secrets.PROD_CLICKHOUSE_SECRET_ARN }}"
+#               S3_SECRET_ARN="${{ secrets.PROD_S3_SECRET_ARN }}"
+#               ;;
+#             *)
+#               echo "❌ Unknown environment: $ENV"
+#               exit 1
+#               ;;
+#           esac
 
-          # Build comprehensive secrets JSON array for ECS task definition
-          jq -n \
-            --arg db "$DB_SECRET_ARN" \
-            --arg encryption "$ENCRYPTION_SECRET_ARN" \
-            --arg nextauth "$NEXTAUTH_SECRET_ARN" \
-            --arg redis "$REDIS_SECRET_ARN" \
-            --arg clickhouse "$CLICKHOUSE_SECRET_ARN" \
-            --arg s3 "$S3_SECRET_ARN" \
-            '[
-              {"name":"DATABASE_URL","valueFrom":$db},
-              {"name":"ENCRYPTION_KEY","valueFrom":($encryption + ":encryption_key")},
-              {"name":"SALT","valueFrom":($encryption + ":salt")},
-              {"name":"NEXTAUTH_SECRET","valueFrom":($nextauth + ":secret")},
-              {"name":"REDIS_AUTH","valueFrom":($redis + ":password")},
-              {"name":"CLICKHOUSE_PASSWORD","valueFrom":($clickhouse + ":password")},
-              {"name":"LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key")},
-              {"name":"LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key")},
-              {"name":"LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key")},
-              {"name":"LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key")},
-              {"name":"LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key")},
-              {"name":"LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key")}
-            ]' > secrets.json
+#           # Build comprehensive secrets JSON array for ECS task definition
+#           jq -n \
+#             --arg db "$DB_SECRET_ARN" \
+#             --arg encryption "$ENCRYPTION_SECRET_ARN" \
+#             --arg nextauth "$NEXTAUTH_SECRET_ARN" \
+#             --arg redis "$REDIS_SECRET_ARN" \
+#             --arg clickhouse "$CLICKHOUSE_SECRET_ARN" \
+#             --arg s3 "$S3_SECRET_ARN" \
+#             '[
+#               {"name":"DATABASE_URL","valueFrom":$db},
+#               {"name":"ENCRYPTION_KEY","valueFrom":($encryption + ":encryption_key")},
+#               {"name":"SALT","valueFrom":($encryption + ":salt")},
+#               {"name":"NEXTAUTH_SECRET","valueFrom":($nextauth + ":secret")},
+#               {"name":"REDIS_AUTH","valueFrom":($redis + ":password")},
+#               {"name":"CLICKHOUSE_PASSWORD","valueFrom":($clickhouse + ":password")},
+#               {"name":"LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key")},
+#               {"name":"LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key")},
+#               {"name":"LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key")},
+#               {"name":"LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key")},
+#               {"name":"LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key")},
+#               {"name":"LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key")}
+#             ]' > secrets.json
 
-          echo "✅ Built secrets.json with all secret ARNs"
-          cat secrets.json
-          echo "env-file=$ENV_FILE" >> $GITHUB_OUTPUT
+#           echo "✅ Built secrets.json with all secret ARNs"
+#           cat secrets.json
+#           echo "env-file=$ENV_FILE" >> $GITHUB_OUTPUT
 
-      - name: Deploy web and worker to ECS
-        env:
-          ENV: ${{ env.ENVIRONMENT }}
-        run: |
-          set -euo pipefail
-          ENV="${{ env.ENVIRONMENT }}"
-          WEB_IMAGE="${{ steps.imgs.outputs.WEB_IMAGE }}"
-          WORKER_IMAGE="${{ steps.imgs.outputs.WORKER_IMAGE }}"
+#       - name: Deploy web and worker to ECS
+#         env:
+#           ENV: ${{ env.ENVIRONMENT }}
+#         run: |
+#           set -euo pipefail
+#           ENV="${{ env.ENVIRONMENT }}"
+#           WEB_IMAGE="${{ steps.imgs.outputs.WEB_IMAGE }}"
+#           WORKER_IMAGE="${{ steps.imgs.outputs.WORKER_IMAGE }}"
 
-          case "$ENV" in
-            dev)
-              CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
-              WEB_SERVICE="${{ secrets.DEV_LANGFUSE_WEB_SERVICE }}"
-              WORKER_SERVICE="${{ secrets.DEV_LANGFUSE_WORKER_SERVICE }}"
-              ;;
-            np)
-              CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
-              WEB_SERVICE="${{ secrets.NP_LANGFUSE_WEB_SERVICE }}"
-              WORKER_SERVICE="${{ secrets.NP_LANGFUSE_WORKER_SERVICE }}"
-              ;;
-            prod)
-              CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
-              WEB_SERVICE="${{ secrets.PROD_LANGFUSE_WEB_SERVICE }}"
-              WORKER_SERVICE="${{ secrets.PROD_LANGFUSE_WORKER_SERVICE }}"
-              ;;
-            *)
-              echo "Unknown ENV $ENV" && exit 1
-              ;;
-          esac
+#           case "$ENV" in
+#             dev)
+#               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
+#               WEB_SERVICE="${{ secrets.DEV_LANGFUSE_WEB_SERVICE }}"
+#               WORKER_SERVICE="${{ secrets.DEV_LANGFUSE_WORKER_SERVICE }}"
+#               ;;
+#             np)
+#               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
+#               WEB_SERVICE="${{ secrets.NP_LANGFUSE_WEB_SERVICE }}"
+#               WORKER_SERVICE="${{ secrets.NP_LANGFUSE_WORKER_SERVICE }}"
+#               ;;
+#             prod)
+#               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
+#               WEB_SERVICE="${{ secrets.PROD_LANGFUSE_WEB_SERVICE }}"
+#               WORKER_SERVICE="${{ secrets.PROD_LANGFUSE_WORKER_SERVICE }}"
+#               ;;
+#             *)
+#               echo "Unknown ENV $ENV" && exit 1
+#               ;;
+#           esac
 
-          for v in CLUSTER WEB_SERVICE WORKER_SERVICE; do
-            [ -n "${!v}" ] || { echo "❌ $v empty"; exit 1; }
-          done
+#           for v in CLUSTER WEB_SERVICE WORKER_SERVICE; do
+#             [ -n "${!v}" ] || { echo "❌ $v empty"; exit 1; }
+#           done
 
-          update_service() {
-            SERVICE_NAME="$1"
-            NEW_IMAGE="$2"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "🔄 Updating $SERVICE_NAME"
-            echo "📦 New image: $NEW_IMAGE"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#           update_service() {
+#             SERVICE_NAME="$1"
+#             NEW_IMAGE="$2"
+#             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#             echo "🔄 Updating $SERVICE_NAME"
+#             echo "📦 New image: $NEW_IMAGE"
+#             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            echo "🔍 Retrieving current task definition..."
-            TASK_DEF_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE_NAME" --query 'services[0].taskDefinition' --output text)
-            if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-              echo "❌ Could not find task definition for $SERVICE_NAME"
-              return 1
-            fi
-            echo "✅ Current task definition: $TASK_DEF_ARN"
+#             echo "🔍 Retrieving current task definition..."
+#             TASK_DEF_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE_NAME" --query 'services[0].taskDefinition' --output text)
+#             if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+#               echo "❌ Could not find task definition for $SERVICE_NAME"
+#               return 1
+#             fi
+#             echo "✅ Current task definition: $TASK_DEF_ARN"
 
-            aws ecs describe-task-definition --task-definition "$TASK_DEF_ARN" --query taskDefinition > current-task-def.json
+#             aws ecs describe-task-definition --task-definition "$TASK_DEF_ARN" --query taskDefinition > current-task-def.json
 
-            echo "🔍 Identifying container to update..."
-            CONTAINER_TO_UPDATE=$(jq -r '.containerDefinitions[].name' current-task-def.json | grep -E 'langfuse-(web|worker)' | head -n1)
-            if [ -z "$CONTAINER_TO_UPDATE" ]; then
-              echo "❌ Could not find container to update in task definition"
-              echo "Available containers:"
-              jq -r '.containerDefinitions[].name' current-task-def.json || true
-              return 1
-            fi
-            echo "✅ Target container: $CONTAINER_TO_UPDATE"
+#             echo "🔍 Identifying container to update..."
+#             CONTAINER_TO_UPDATE=$(jq -r '.containerDefinitions[].name' current-task-def.json | grep -E 'langfuse-(web|worker)' | head -n1)
+#             if [ -z "$CONTAINER_TO_UPDATE" ]; then
+#               echo "❌ Could not find container to update in task definition"
+#               echo "Available containers:"
+#               jq -r '.containerDefinitions[].name' current-task-def.json || true
+#               return 1
+#             fi
+#             echo "✅ Target container: $CONTAINER_TO_UPDATE"
 
-            echo "📝 Loading environment variables and secrets..."
-            if [ ! -f env_vars.json ] || [ ! -f secrets.json ]; then
-              echo "❌ Missing env_vars.json or secrets.json"
-              return 1
-            fi
+#             echo "📝 Loading environment variables and secrets..."
+#             if [ ! -f env_vars.json ] || [ ! -f secrets.json ]; then
+#               echo "❌ Missing env_vars.json or secrets.json"
+#               return 1
+#             fi
             
-            ENV_VARS_JSON=$(cat env_vars.json)
-            SECRETS_JSON=$(cat secrets.json)
-            echo "✅ Loaded configuration files"
+#             ENV_VARS_JSON=$(cat env_vars.json)
+#             SECRETS_JSON=$(cat secrets.json)
+#             echo "✅ Loaded configuration files"
 
-            jq --arg IMG "$NEW_IMAGE" --arg CN "$CONTAINER_TO_UPDATE" --arg APP "$ENV" --arg BUILD "${{ github.run_number }}" --argjson ENV_VARS "$ENV_VARS_JSON" --argjson SECRETS "$SECRETS_JSON" '
-              .containerDefinitions = (.containerDefinitions | map(
-                if .name == $CN then
-                  .image = $IMG |
-                  # Remove environment variables that will come from secrets
-                  .environment = ((.environment // []) |
-                    map(select(
-                      .name != "APP_ENV" and
-                      .name != "BUILD_NUMBER" and
-                      .name != "ENVIRONMENT" and
-                      .name != "DATABASE_URL" and
-                      .name != "ENCRYPTION_KEY" and
-                      .name != "SALT" and
-                      .name != "NEXTAUTH_SECRET" and
-                      .name != "REDIS_AUTH" and
-                      .name != "CLICKHOUSE_PASSWORD" and
-                      .name != "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID" and
-                      .name != "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY" and
-                      .name != "LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID" and
-                      .name != "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY" and
-                      .name != "LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID" and
-                      .name != "LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY"
-                    ))
-                  ) + $ENV_VARS + [
-                    {"name":"APP_ENV","value":$APP},
-                    {"name":"BUILD_NUMBER","value":$BUILD},
-                    {"name":"ENVIRONMENT","value":$APP}
-                  ] |
-                  # Replace secrets completely with new ones from Secrets Manager
-                  .secrets = $SECRETS
-                else
-                  .
-                end
-              )) |
-              del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
-            ' current-task-def.json > new-task-def.json
+#             jq --arg IMG "$NEW_IMAGE" --arg CN "$CONTAINER_TO_UPDATE" --arg APP "$ENV" --arg BUILD "${{ github.run_number }}" --argjson ENV_VARS "$ENV_VARS_JSON" --argjson SECRETS "$SECRETS_JSON" '
+#               .containerDefinitions = (.containerDefinitions | map(
+#                 if .name == $CN then
+#                   .image = $IMG |
+#                   # Remove environment variables that will come from secrets
+#                   .environment = ((.environment // []) |
+#                     map(select(
+#                       .name != "APP_ENV" and
+#                       .name != "BUILD_NUMBER" and
+#                       .name != "ENVIRONMENT" and
+#                       .name != "DATABASE_URL" and
+#                       .name != "ENCRYPTION_KEY" and
+#                       .name != "SALT" and
+#                       .name != "NEXTAUTH_SECRET" and
+#                       .name != "REDIS_AUTH" and
+#                       .name != "CLICKHOUSE_PASSWORD" and
+#                       .name != "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID" and
+#                       .name != "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY" and
+#                       .name != "LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID" and
+#                       .name != "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY" and
+#                       .name != "LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID" and
+#                       .name != "LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY"
+#                     ))
+#                   ) + $ENV_VARS + [
+#                     {"name":"APP_ENV","value":$APP},
+#                     {"name":"BUILD_NUMBER","value":$BUILD},
+#                     {"name":"ENVIRONMENT","value":$APP}
+#                   ] |
+#                   # Replace secrets completely with new ones from Secrets Manager
+#                   .secrets = $SECRETS
+#                 else
+#                   .
+#                 end
+#               )) |
+#               del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
+#             ' current-task-def.json > new-task-def.json
 
-            echo "🔍 Validating new task definition..."
-            if ! grep -q "$NEW_IMAGE" new-task-def.json; then
-              echo "❌ New task def does not contain updated image"
-              echo "Expected: $NEW_IMAGE"
-              return 1
-            fi
-            echo "✅ Task definition validated"
+#             echo "🔍 Validating new task definition..."
+#             if ! grep -q "$NEW_IMAGE" new-task-def.json; then
+#               echo "❌ New task def does not contain updated image"
+#               echo "Expected: $NEW_IMAGE"
+#               return 1
+#             fi
+#             echo "✅ Task definition validated"
 
-            echo "📝 Registering new task definition..."
-            NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
-            echo "✅ Registered: $NEW_TASK_DEF_ARN"
+#             echo "📝 Registering new task definition..."
+#             NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
+#             echo "✅ Registered: $NEW_TASK_DEF_ARN"
 
-            echo "🚀 Updating ECS service..."
-            aws ecs update-service \
-              --cluster "$CLUSTER" \
-              --service "$SERVICE_NAME" \
-              --task-definition "$NEW_TASK_DEF_ARN" \
-              --force-new-deployment \
-              --no-cli-pager
+#             echo "🚀 Updating ECS service..."
+#             aws ecs update-service \
+#               --cluster "$CLUSTER" \
+#               --service "$SERVICE_NAME" \
+#               --task-definition "$NEW_TASK_DEF_ARN" \
+#               --force-new-deployment \
+#               --no-cli-pager
             
-            echo "⏳ Waiting for service to stabilize (this may take several minutes)..."
-            if aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE_NAME"; then
-              echo "✅ Service is stable"
-            else
-              echo "⚠️ Wait timed out for $SERVICE_NAME (service may still be updating)"
-            fi
+#             echo "⏳ Waiting for service to stabilize (this may take several minutes)..."
+#             if aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE_NAME"; then
+#               echo "✅ Service is stable"
+#             else
+#               echo "⚠️ Wait timed out for $SERVICE_NAME (service may still be updating)"
+#             fi
 
-            rm -f current-task-def.json new-task-def.json
-            echo "✅ $SERVICE_NAME deployment complete"
-            echo ""
-          }
+#             rm -f current-task-def.json new-task-def.json
+#             echo "✅ $SERVICE_NAME deployment complete"
+#             echo ""
+#           }
 
-          update_service "$WEB_SERVICE" "$WEB_IMAGE"
-          update_service "$WORKER_SERVICE" "$WORKER_IMAGE"
-        shell: bash
+#           update_service "$WEB_SERVICE" "$WEB_IMAGE"
+#           update_service "$WORKER_SERVICE" "$WORKER_IMAGE"
+#         shell: bash
 
-      - name: Final status
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ Deployment Complete"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "📦 Deployed Images:"
-          echo "  Web:    ${{ steps.imgs.outputs.WEB_IMAGE }}"
-          echo "  Worker: ${{ steps.imgs.outputs.WORKER_IMAGE }}"
-          echo ""
-          echo "🌍 Environment: ${{ env.ENVIRONMENT }}"
-          echo "🏷️  Build Tag:   ${{ env.IMAGE_TAG }}"
-          echo "📅 Timestamp:   $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#       - name: Final status
+#         run: |
+#           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#           echo "✅ Deployment Complete"
+#           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#           echo ""
+#           echo "📦 Deployed Images:"
+#           echo "  Web:    ${{ steps.imgs.outputs.WEB_IMAGE }}"
+#           echo "  Worker: ${{ steps.imgs.outputs.WORKER_IMAGE }}"
+#           echo ""
+#           echo "🌍 Environment: ${{ env.ENVIRONMENT }}"
+#           echo "🏷️  Build Tag:   ${{ env.IMAGE_TAG }}"
+#           echo "📅 Timestamp:   $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+#           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      - name: Deployment summary
-        if: always()
-        run: |
-          echo "## 🚀 Langfuse ECS Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Deployment Details" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | \`${{ env.ENVIRONMENT }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Tag | \`${{ env.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | \`${{ needs.prepare.outputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Deployed Images" >> $GITHUB_STEP_SUMMARY
-          echo "- **Web**: \`${{ steps.imgs.outputs.WEB_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Worker**: \`${{ steps.imgs.outputs.WORKER_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
+#       - name: Deployment summary
+#         if: always()
+#         run: |
+#           echo "## 🚀 Langfuse ECS Deployment" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "### 📊 Deployment Details" >> $GITHUB_STEP_SUMMARY
+#           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+#           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+#           echo "| Environment | \`${{ env.ENVIRONMENT }}\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "| Build Tag | \`${{ env.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "| Branch | \`${{ needs.prepare.outputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+#           echo "" >> $GITHUB_STEP_SUMMARY
+#           echo "### 📦 Deployed Images" >> $GITHUB_STEP_SUMMARY
+#           echo "- **Web**: \`${{ steps.imgs.outputs.WEB_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
+#           echo "- **Worker**: \`${{ steps.imgs.outputs.WORKER_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
