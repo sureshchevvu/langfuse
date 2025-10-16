@@ -27,32 +27,25 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       env: ${{ steps.env.outputs.ENVIRONMENT }}
-      image-tag: ${{ steps.tag.outputs.IMAGE_TAG }}
-      branch: ${{ steps.env.outputs.BRANCH }}
     steps:
       - name: Determine environment
         id: env
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             ENV="${{ inputs.environment }}"
-            BRANCH="chevvu/${ENV}"
             echo "ENVIRONMENT=${ENV}" >> $GITHUB_OUTPUT
-            echo "BRANCH=${BRANCH}" >> $GITHUB_OUTPUT
             echo "🎯 Manual deployment to ${ENV} environment"
           else
             BR="${{ github.ref_name }}"
             case "$BR" in
               "chevvu/dev")
                 echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
-                echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
                 ;;
               "chevvu/np")
                 echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
-                echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
                 ;;
               "chevvu/prod")
                 echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
-                echo "BRANCH=${BR}" >> $GITHUB_OUTPUT
                 ;;
               *)
                 echo "❌ Unknown branch $BR"
@@ -62,12 +55,6 @@ jobs:
             echo "🚀 Automatic deployment from branch ${BR}"
           fi
 
-      - name: Compute image tag
-        id: tag
-        run: |
-          IMAGE_TAG="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
   deploy-redis:
     name: 🔴 Deploy Redis
     needs: prepare
@@ -75,9 +62,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      ENVIRONMENT: ${{ needs.prepare.outputs.env }}
-      IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -85,149 +69,32 @@ jobs:
           role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
-      - name: Get image URI
-        id: image
+      - name: Force new deployment
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region || echo "us-east-1")
-          ENV="${{ env.ENVIRONMENT }}"
-          REPO="${ENV}-langfuse-redis"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
-          echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
-          echo "📦 Redis Image: $IMAGE"
-
-      - name: Get ECS service details
-        id: ecs
-        run: |
-          ENV="${{ env.ENVIRONMENT }}"
+          ENV="${{ needs.prepare.outputs.env }}"
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.DEV_REDIS_SERVICE }}"
-              REDIS_SECRET_ARN="${{ secrets.DEV_REDIS_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.NP_REDIS_SERVICE }}"
-              REDIS_SECRET_ARN="${{ secrets.NP_REDIS_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.PROD_REDIS_SERVICE }}"
-              REDIS_SECRET_ARN="${{ secrets.PROD_REDIS_SECRET_ARN }}"
               ;;
           esac
           
-          echo "CLUSTER=$CLUSTER" >> $GITHUB_OUTPUT
-          echo "SERVICE=$SERVICE" >> $GITHUB_OUTPUT
-          echo "REDIS_SECRET_ARN=$REDIS_SECRET_ARN" >> $GITHUB_OUTPUT
-          
-          echo "🎯 Cluster: $CLUSTER"
-          echo "🎯 Service: $SERVICE"
-
-      - name: Get current task definition
-        id: current-task
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          
-          echo "🔍 Getting current task definition for $SERVICE..."
-          TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE" \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          
-          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "❌ Task definition not found"
-            exit 1
-          fi
-          
-          echo "✅ Current task definition: $TASK_DEF_ARN"
-          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Create task definition JSON
-        run: |
-          TASK_DEF_ARN="${{ steps.current-task.outputs.TASK_DEF_ARN }}"
-          
-          echo "📥 Downloading current task definition..."
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEF_ARN" \
-            --query taskDefinition > current-task-def.json
-
-      - name: Update task definition with new image and secrets
-        run: |
-          NEW_IMAGE="${{ steps.image.outputs.IMAGE }}"
-          REDIS_SECRET_ARN="${{ steps.ecs.outputs.REDIS_SECRET_ARN }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          BUILD="${{ github.run_number }}"
-          
-          echo "🔧 Updating task definition..."
-          echo "  Image: $NEW_IMAGE"
-          echo "  Redis Secret: $REDIS_SECRET_ARN"
-          
-          # Create secrets JSON for Redis
-          cat > redis-secrets.json <<EOF
-          [
-            {
-              "name": "REDIS_PASSWORD",
-              "valueFrom": "${REDIS_SECRET_ARN}:password::"
-            }
-          ]
-          EOF
-          
-          SECRETS_JSON=$(cat redis-secrets.json)
-          
-          # Update task definition
-          jq --arg IMG "$NEW_IMAGE" \
-             --arg ENV "$ENV" \
-             --arg BUILD "$BUILD" \
-             --argjson SECRETS "$SECRETS_JSON" '
-            .containerDefinitions = (.containerDefinitions | map(
-              .image = $IMG |
-              .environment = ((.environment // []) + [
-                {"name": "ENVIRONMENT", "value": $ENV},
-                {"name": "BUILD_NUMBER", "value": $BUILD}
-              ]) |
-              .secrets = $SECRETS
-            )) |
-            del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
-          ' current-task-def.json > new-task-def.json
-          
-          echo "✅ Task definition updated"
-
-      - name: Register new task definition
-        id: register
-        run: |
-          echo "📝 Registering new task definition..."
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          echo "✅ Registered: $NEW_TASK_DEF_ARN"
-          echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Update ECS service
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          TASK_DEF="${{ steps.register.outputs.NEW_TASK_DEF_ARN }}"
-          
-          echo "🚀 Updating ECS service..."
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
           aws ecs update-service \
             --cluster "$CLUSTER" \
             --service "$SERVICE" \
-            --task-definition "$TASK_DEF" \
             --force-new-deployment \
             --no-cli-pager
           
-          echo "⏳ Waiting for service to stabilize..."
-          if aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
-            echo "✅ Redis service is stable"
-          else
-            echo "⚠️ Wait timed out (service may still be updating)"
-          fi
+          echo "✅ Redis deployment triggered"
 
   deploy-clickhouse:
     name: 🏠 Deploy ClickHouse
@@ -236,9 +103,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      ENVIRONMENT: ${{ needs.prepare.outputs.env }}
-      IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -246,157 +110,32 @@ jobs:
           role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
-      - name: Get image URI
-        id: image
+      - name: Force new deployment
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region || echo "us-east-1")
-          ENV="${{ env.ENVIRONMENT }}"
-          REPO="${ENV}-langfuse-clickhouse"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
-          echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
-          echo "📦 ClickHouse Image: $IMAGE"
-
-      - name: Get ECS service details
-        id: ecs
-        run: |
-          ENV="${{ env.ENVIRONMENT }}"
+          ENV="${{ needs.prepare.outputs.env }}"
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.DEV_CLICKHOUSE_SERVICE }}"
-              CH_SECRET_ARN="${{ secrets.DEV_CLICKHOUSE_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.NP_CLICKHOUSE_SERVICE }}"
-              CH_SECRET_ARN="${{ secrets.NP_CLICKHOUSE_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.PROD_CLICKHOUSE_SERVICE }}"
-              CH_SECRET_ARN="${{ secrets.PROD_CLICKHOUSE_SECRET_ARN }}"
               ;;
           esac
           
-          echo "CLUSTER=$CLUSTER" >> $GITHUB_OUTPUT
-          echo "SERVICE=$SERVICE" >> $GITHUB_OUTPUT
-          echo "CH_SECRET_ARN=$CH_SECRET_ARN" >> $GITHUB_OUTPUT
-          
-          echo "🎯 Cluster: $CLUSTER"
-          echo "🎯 Service: $SERVICE"
-
-      - name: Get current task definition
-        id: current-task
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          
-          echo "🔍 Getting current task definition for $SERVICE..."
-          TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE" \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          
-          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "❌ Task definition not found"
-            exit 1
-          fi
-          
-          echo "✅ Current task definition: $TASK_DEF_ARN"
-          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Create task definition JSON
-        run: |
-          TASK_DEF_ARN="${{ steps.current-task.outputs.TASK_DEF_ARN }}"
-          
-          echo "📥 Downloading current task definition..."
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEF_ARN" \
-            --query taskDefinition > current-task-def.json
-
-      - name: Update task definition with new image and secrets
-        run: |
-          NEW_IMAGE="${{ steps.image.outputs.IMAGE }}"
-          CH_SECRET_ARN="${{ steps.ecs.outputs.CH_SECRET_ARN }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          BUILD="${{ github.run_number }}"
-          
-          echo "🔧 Updating task definition..."
-          echo "  Image: $NEW_IMAGE"
-          echo "  ClickHouse Secret: $CH_SECRET_ARN"
-          
-          # Create secrets JSON for ClickHouse
-          cat > clickhouse-secrets.json <<EOF
-          [
-            {
-              "name": "CLICKHOUSE_PASSWORD",
-              "valueFrom": "${CH_SECRET_ARN}:password::"
-            },
-            {
-              "name": "CLICKHOUSE_USER",
-              "valueFrom": "${CH_SECRET_ARN}:username::"
-            },
-            {
-              "name": "CLICKHOUSE_DB",
-              "valueFrom": "${CH_SECRET_ARN}:database::"
-            }
-          ]
-          EOF
-          
-          SECRETS_JSON=$(cat clickhouse-secrets.json)
-          
-          # Update task definition
-          jq --arg IMG "$NEW_IMAGE" \
-             --arg ENV "$ENV" \
-             --arg BUILD "$BUILD" \
-             --argjson SECRETS "$SECRETS_JSON" '
-            .containerDefinitions = (.containerDefinitions | map(
-              .image = $IMG |
-              .environment = ((.environment // []) + [
-                {"name": "ENVIRONMENT", "value": $ENV},
-                {"name": "BUILD_NUMBER", "value": $BUILD}
-              ]) |
-              .secrets = $SECRETS
-            )) |
-            del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
-          ' current-task-def.json > new-task-def.json
-          
-          echo "✅ Task definition updated"
-
-      - name: Register new task definition
-        id: register
-        run: |
-          echo "📝 Registering new task definition..."
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          echo "✅ Registered: $NEW_TASK_DEF_ARN"
-          echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Update ECS service
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          TASK_DEF="${{ steps.register.outputs.NEW_TASK_DEF_ARN }}"
-          
-          echo "🚀 Updating ECS service..."
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
           aws ecs update-service \
             --cluster "$CLUSTER" \
             --service "$SERVICE" \
-            --task-definition "$TASK_DEF" \
             --force-new-deployment \
             --no-cli-pager
           
-          echo "⏳ Waiting for service to stabilize..."
-          if aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
-            echo "✅ ClickHouse service is stable"
-          else
-            echo "⚠️ Wait timed out (service may still be updating)"
-          fi
+          echo "✅ ClickHouse deployment triggered"
 
   deploy-minio:
     name: 🪣 Deploy MinIO
@@ -405,9 +144,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      ENVIRONMENT: ${{ needs.prepare.outputs.env }}
-      IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -415,153 +151,32 @@ jobs:
           role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
-      - name: Get image URI
-        id: image
+      - name: Force new deployment
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region || echo "us-east-1")
-          ENV="${{ env.ENVIRONMENT }}"
-          REPO="${ENV}-langfuse-minio"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
-          echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
-          echo "📦 MinIO Image: $IMAGE"
-
-      - name: Get ECS service details
-        id: ecs
-        run: |
-          ENV="${{ env.ENVIRONMENT }}"
+          ENV="${{ needs.prepare.outputs.env }}"
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.DEV_MINIO_SERVICE }}"
-              S3_SECRET_ARN="${{ secrets.DEV_S3_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.NP_MINIO_SERVICE }}"
-              S3_SECRET_ARN="${{ secrets.NP_S3_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.PROD_MINIO_SERVICE }}"
-              S3_SECRET_ARN="${{ secrets.PROD_S3_SECRET_ARN }}"
               ;;
           esac
           
-          echo "CLUSTER=$CLUSTER" >> $GITHUB_OUTPUT
-          echo "SERVICE=$SERVICE" >> $GITHUB_OUTPUT
-          echo "S3_SECRET_ARN=$S3_SECRET_ARN" >> $GITHUB_OUTPUT
-          
-          echo "🎯 Cluster: $CLUSTER"
-          echo "🎯 Service: $SERVICE"
-
-      - name: Get current task definition
-        id: current-task
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          
-          echo "🔍 Getting current task definition for $SERVICE..."
-          TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE" \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          
-          if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
-            echo "❌ Task definition not found"
-            exit 1
-          fi
-          
-          echo "✅ Current task definition: $TASK_DEF_ARN"
-          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Create task definition JSON
-        run: |
-          TASK_DEF_ARN="${{ steps.current-task.outputs.TASK_DEF_ARN }}"
-          
-          echo "📥 Downloading current task definition..."
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEF_ARN" \
-            --query taskDefinition > current-task-def.json
-
-      - name: Update task definition with new image and secrets
-        run: |
-          NEW_IMAGE="${{ steps.image.outputs.IMAGE }}"
-          S3_SECRET_ARN="${{ steps.ecs.outputs.S3_SECRET_ARN }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          BUILD="${{ github.run_number }}"
-          
-          echo "🔧 Updating task definition..."
-          echo "  Image: $NEW_IMAGE"
-          echo "  S3/MinIO Secret: $S3_SECRET_ARN"
-          
-          # Create secrets JSON for MinIO
-          cat > minio-secrets.json <<EOF
-          [
-            {
-              "name": "MINIO_ROOT_USER",
-              "valueFrom": "${S3_SECRET_ARN}:access_key::"
-            },
-            {
-              "name": "MINIO_ROOT_PASSWORD",
-              "valueFrom": "${S3_SECRET_ARN}:secret_key::"
-            }
-          ]
-          EOF
-          
-          SECRETS_JSON=$(cat minio-secrets.json)
-          
-          # Update task definition
-          jq --arg IMG "$NEW_IMAGE" \
-             --arg ENV "$ENV" \
-             --arg BUILD "$BUILD" \
-             --argjson SECRETS "$SECRETS_JSON" '
-            .containerDefinitions = (.containerDefinitions | map(
-              .image = $IMG |
-              .environment = ((.environment // []) + [
-                {"name": "ENVIRONMENT", "value": $ENV},
-                {"name": "BUILD_NUMBER", "value": $BUILD}
-              ]) |
-              .secrets = $SECRETS
-            )) |
-            del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
-          ' current-task-def.json > new-task-def.json
-          
-          echo "✅ Task definition updated"
-
-      - name: Register new task definition
-        id: register
-        run: |
-          echo "📝 Registering new task definition..."
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          echo "✅ Registered: $NEW_TASK_DEF_ARN"
-          echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Update ECS service
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          TASK_DEF="${{ steps.register.outputs.NEW_TASK_DEF_ARN }}"
-          
-          echo "🚀 Updating ECS service..."
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
           aws ecs update-service \
             --cluster "$CLUSTER" \
             --service "$SERVICE" \
-            --task-definition "$TASK_DEF" \
             --force-new-deployment \
             --no-cli-pager
           
-          echo "⏳ Waiting for service to stabilize..."
-          if aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
-            echo "✅ MinIO service is stable"
-          else
-            echo "⚠️ Wait timed out (service may still be updating)"
-          fi
+          echo "✅ MinIO deployment triggered"
 
   deploy-web:
     name: 🌐 Deploy Web Service
@@ -570,180 +185,39 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      ENVIRONMENT: ${{ needs.prepare.outputs.env }}
-      IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
-      - name: Get image URI
-        id: image
+      - name: Force new deployment
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region || echo "us-east-1")
-          ENV="${{ env.ENVIRONMENT }}"
-          REPO="${ENV}-langfuse-web"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
-          echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
-          echo "📦 Web Image: $IMAGE"
-
-      - name: Get ECS service details and load secrets
-        id: ecs
-        run: |
-          BRANCH="${{ needs.prepare.outputs.branch }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          
+          ENV="${{ needs.prepare.outputs.env }}"
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.DEV_WEB_SERVICE }}"
-              DB_SECRET_ARN="arn:aws:secretsmanager:us-east-1:203874373410:secret:dev/langfuse/database-url-TrrygY"
-              ENCRYPTION_SECRET_ARN="${{ secrets.DEV_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.DEV_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.DEV_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.DEV_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.DEV_S3_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.NP_WEB_SERVICE }}"
-              DB_SECRET_ARN="${{ secrets.NP_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.NP_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.NP_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.NP_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.NP_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.NP_S3_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.PROD_WEB_SERVICE }}"
-              DB_SECRET_ARN="${{ secrets.PROD_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.PROD_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.PROD_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.PROD_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.PROD_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.PROD_S3_SECRET_ARN }}"
               ;;
           esac
           
-          echo "CLUSTER=$CLUSTER" >> $GITHUB_OUTPUT
-          echo "SERVICE=$SERVICE" >> $GITHUB_OUTPUT
-          
-          # Build secrets JSON
-          jq -n \
-            --arg db "$DB_SECRET_ARN" \
-            --arg encryption "$ENCRYPTION_SECRET_ARN" \
-            --arg nextauth "$NEXTAUTH_SECRET_ARN" \
-            --arg redis "$REDIS_SECRET_ARN" \
-            --arg clickhouse "$CLICKHOUSE_SECRET_ARN" \
-            --arg s3 "$S3_SECRET_ARN" \
-            '[
-              {"name":"DATABASE_URL","valueFrom":$db},
-              {"name":"ENCRYPTION_KEY","valueFrom":($encryption + ":encryption_key::")},
-              {"name":"SALT","valueFrom":($encryption + ":salt::")},
-              {"name":"NEXTAUTH_SECRET","valueFrom":($nextauth + ":secret::")},
-              {"name":"REDIS_AUTH","valueFrom":($redis + ":password::")},
-              {"name":"CLICKHOUSE_PASSWORD","valueFrom":($clickhouse + ":password::")},
-              {"name":"LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key::")},
-              {"name":"LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key::")},
-              {"name":"LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key::")},
-              {"name":"LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key::")},
-              {"name":"LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key::")},
-              {"name":"LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key::")}
-            ]' > web-secrets.json
-          
-          echo "✅ Built secrets configuration"
-
-      - name: Load environment variables from file
-        run: |
-          BRANCH="${{ needs.prepare.outputs.branch }}"
-          ENV_FILE=".github/envs/${BRANCH}.env"
-          
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "❌ Env file not found: $ENV_FILE"
-            exit 1
-          fi
-          
-          # Parse env file to JSON - filter out comments and empty lines
-          echo "[]" > env_vars.json
-          while IFS='=' read -r key value; do
-            # Skip comments and empty lines
-            if [[ "$key" =~ ^#.* ]] || [ -z "$key" ]; then
-              continue
-            fi
-            # Skip if no value
-            if [ -z "$value" ]; then
-              continue
-            fi
-            # Add to JSON array
-            jq --arg k "$key" --arg v "$value" '. += [{"name": $k, "value": $v}]' env_vars.json > env_vars_tmp.json
-            mv env_vars_tmp.json env_vars.json
-          done < "$ENV_FILE"
-          
-          echo "✅ Loaded environment variables"
-
-      - name: Update web service
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          NEW_IMAGE="${{ steps.image.outputs.IMAGE }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          BUILD="${{ github.run_number }}"
-          
-          # Get current task definition
-          TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE" \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEF_ARN" \
-            --query taskDefinition > current-task-def.json
-          
-          # Load configs
-          ENV_VARS_JSON=$(cat env_vars.json)
-          SECRETS_JSON=$(cat web-secrets.json)
-          
-          # Update task definition
-          jq --arg IMG "$NEW_IMAGE" \
-             --arg ENV "$ENV" \
-             --arg BUILD "$BUILD" \
-             --argjson ENV_VARS "$ENV_VARS_JSON" \
-             --argjson SECRETS "$SECRETS_JSON" '
-            .containerDefinitions = (.containerDefinitions | map(
-              .image = $IMG |
-              .environment = $ENV_VARS + [
-                {"name":"APP_ENV","value":$ENV},
-                {"name":"BUILD_NUMBER","value":$BUILD},
-                {"name":"ENVIRONMENT","value":$ENV}
-              ] |
-              .secrets = $SECRETS
-            )) |
-            del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
-          ' current-task-def.json > new-task-def.json
-          
-          # Register and update
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
           aws ecs update-service \
             --cluster "$CLUSTER" \
             --service "$SERVICE" \
-            --task-definition "$NEW_TASK_DEF_ARN" \
             --force-new-deployment \
             --no-cli-pager
           
-          echo "✅ Web service updated"
+          echo "✅ Web service deployment triggered"
 
   deploy-worker:
     name: 👷 Deploy Worker Service
@@ -752,180 +226,39 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      ENVIRONMENT: ${{ needs.prepare.outputs.env }}
-      IMAGE_TAG: ${{ needs.prepare.outputs.image-tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
-      - name: Get image URI
-        id: image
+      - name: Force new deployment
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region || echo "us-east-1")
-          ENV="${{ env.ENVIRONMENT }}"
-          REPO="${ENV}-langfuse-worker"
-          IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:latest"
-          echo "IMAGE=$IMAGE" >> $GITHUB_OUTPUT
-          echo "📦 Worker Image: $IMAGE"
-
-      - name: Get ECS service details and load secrets
-        id: ecs
-        run: |
-          BRANCH="${{ needs.prepare.outputs.branch }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          
+          ENV="${{ needs.prepare.outputs.env }}"
           case "$ENV" in
             dev)
               CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.DEV_WORKER_SERVICE }}"
-              DB_SECRET_ARN="arn:aws:secretsmanager:us-east-1:203874373410:secret:dev/langfuse/database-url-TrrygY"
-              ENCRYPTION_SECRET_ARN="${{ secrets.DEV_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.DEV_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.DEV_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.DEV_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.DEV_S3_SECRET_ARN }}"
               ;;
             np)
               CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.NP_WORKER_SERVICE }}"
-              DB_SECRET_ARN="${{ secrets.NP_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.NP_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.NP_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.NP_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.NP_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.NP_S3_SECRET_ARN }}"
               ;;
             prod)
               CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
               SERVICE="${{ secrets.PROD_WORKER_SERVICE }}"
-              DB_SECRET_ARN="${{ secrets.PROD_DATABASE_URL_SECRET_ARN }}"
-              ENCRYPTION_SECRET_ARN="${{ secrets.PROD_ENCRYPTION_SECRET_ARN }}"
-              NEXTAUTH_SECRET_ARN="${{ secrets.PROD_NEXTAUTH_SECRET_ARN }}"
-              REDIS_SECRET_ARN="${{ secrets.PROD_REDIS_SECRET_ARN }}"
-              CLICKHOUSE_SECRET_ARN="${{ secrets.PROD_CLICKHOUSE_SECRET_ARN }}"
-              S3_SECRET_ARN="${{ secrets.PROD_S3_SECRET_ARN }}"
               ;;
           esac
           
-          echo "CLUSTER=$CLUSTER" >> $GITHUB_OUTPUT
-          echo "SERVICE=$SERVICE" >> $GITHUB_OUTPUT
-          
-          # Build secrets JSON
-          jq -n \
-            --arg db "$DB_SECRET_ARN" \
-            --arg encryption "$ENCRYPTION_SECRET_ARN" \
-            --arg nextauth "$NEXTAUTH_SECRET_ARN" \
-            --arg redis "$REDIS_SECRET_ARN" \
-            --arg clickhouse "$CLICKHOUSE_SECRET_ARN" \
-            --arg s3 "$S3_SECRET_ARN" \
-            '[
-              {"name":"DATABASE_URL","valueFrom":$db},
-              {"name":"ENCRYPTION_KEY","valueFrom":($encryption + ":encryption_key::")},
-              {"name":"SALT","valueFrom":($encryption + ":salt::")},
-              {"name":"NEXTAUTH_SECRET","valueFrom":($nextauth + ":secret::")},
-              {"name":"REDIS_AUTH","valueFrom":($redis + ":password::")},
-              {"name":"CLICKHOUSE_PASSWORD","valueFrom":($clickhouse + ":password::")},
-              {"name":"LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key::")},
-              {"name":"LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key::")},
-              {"name":"LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key::")},
-              {"name":"LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key::")},
-              {"name":"LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID","valueFrom":($s3 + ":access_key::")},
-              {"name":"LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY","valueFrom":($s3 + ":secret_key::")}
-            ]' > worker-secrets.json
-          
-          echo "✅ Built secrets configuration"
-
-      - name: Load environment variables from file
-        run: |
-          BRANCH="${{ needs.prepare.outputs.branch }}"
-          ENV_FILE=".github/envs/${BRANCH}.env"
-          
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "❌ Env file not found: $ENV_FILE"
-            exit 1
-          fi
-          
-          # Parse env file to JSON - filter out comments and empty lines
-          echo "[]" > env_vars.json
-          while IFS='=' read -r key value; do
-            # Skip comments and empty lines
-            if [[ "$key" =~ ^#.* ]] || [ -z "$key" ]; then
-              continue
-            fi
-            # Skip if no value
-            if [ -z "$value" ]; then
-              continue
-            fi
-            # Add to JSON array
-            jq --arg k "$key" --arg v "$value" '. += [{"name": $k, "value": $v}]' env_vars.json > env_vars_tmp.json
-            mv env_vars_tmp.json env_vars.json
-          done < "$ENV_FILE"
-          
-          echo "✅ Loaded environment variables"
-
-      - name: Update worker service
-        run: |
-          CLUSTER="${{ steps.ecs.outputs.CLUSTER }}"
-          SERVICE="${{ steps.ecs.outputs.SERVICE }}"
-          NEW_IMAGE="${{ steps.image.outputs.IMAGE }}"
-          ENV="${{ env.ENVIRONMENT }}"
-          BUILD="${{ github.run_number }}"
-          
-          # Get current task definition
-          TASK_DEF_ARN=$(aws ecs describe-services \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE" \
-            --query 'services[0].taskDefinition' \
-            --output text)
-          
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEF_ARN" \
-            --query taskDefinition > current-task-def.json
-          
-          # Load configs
-          ENV_VARS_JSON=$(cat env_vars.json)
-          SECRETS_JSON=$(cat worker-secrets.json)
-          
-          # Update task definition
-          jq --arg IMG "$NEW_IMAGE" \
-             --arg ENV "$ENV" \
-             --arg BUILD "$BUILD" \
-             --argjson ENV_VARS "$ENV_VARS_JSON" \
-             --argjson SECRETS "$SECRETS_JSON" '
-            .containerDefinitions = (.containerDefinitions | map(
-              .image = $IMG |
-              .environment = $ENV_VARS + [
-                {"name":"APP_ENV","value":$ENV},
-                {"name":"BUILD_NUMBER","value":$BUILD},
-                {"name":"ENVIRONMENT","value":$ENV}
-              ] |
-              .secrets = $SECRETS
-            )) |
-            del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes, .placementConstraints)
-          ' current-task-def.json > new-task-def.json
-          
-          # Register and update
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
           aws ecs update-service \
             --cluster "$CLUSTER" \
             --service "$SERVICE" \
-            --task-definition "$NEW_TASK_DEF_ARN" \
             --force-new-deployment \
             --no-cli-pager
           
-          echo "✅ Worker service updated"
+          echo "✅ Worker service deployment triggered"
 
   summary:
     name: 📊 Deployment Summary
@@ -941,8 +274,6 @@ jobs:
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Environment | \`${{ needs.prepare.outputs.env }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Tag | \`${{ needs.prepare.outputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | \`${{ needs.prepare.outputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -955,5 +286,7 @@ jobs:
           echo "| Web | \`${{ needs.deploy-web.result }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Worker | \`${{ needs.deploy-worker.result }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ℹ️ Note" >> $GITHUB_STEP_SUMMARY
-          echo "PostgreSQL is managed separately (RDS) and not deployed via ECS" >> $GITHUB_STEP_SUMMARY
+          echo "### ℹ️ Notes" >> $GITHUB_STEP_SUMMARY
+          echo "- PostgreSQL is managed separately (RDS) and not deployed via ECS" >> $GITHUB_STEP_SUMMARY
+          echo "- Services pull the latest images from ECR with tag \`:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- All credentials are managed via AWS Secrets Manager in existing task definitions" >> $GITHUB_STEP_SUMMARY
