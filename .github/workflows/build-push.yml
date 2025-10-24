@@ -1,222 +1,222 @@
-# name: Langfuse Multi-Service Build & Push to ECR
+name: Langfuse Multi-Service Build & Push to ECR
 
-# on:
-#   push:
-#     branches:
-#       - chevvu/dev
-#       - chevvu/np
-#       - chevvu/prod
-#     paths-ignore:
-#       - "**/*.md"
-#       - ".github/*"
-#       - ".gitignore"
-#       - "*.config.js"
+on:
+  push:
+    branches:
+      - chevvu/dev
+      - chevvu/np
+      - chevvu/prod
+    paths-ignore:
+      - "**/*.md"
+      - ".github/*"
+      - ".gitignore"
+      - "*.config.js"
 
-# jobs:
-#   setup:
-#     name: 🔧 Environment Setup
-#     runs-on: ubuntu-latest
-#     timeout-minutes: 5
-#     outputs:
-#       environment: ${{ steps.env-config.outputs.ENVIRONMENT }}
-#       build-id: ${{ steps.generate-id.outputs.unique-id }}
-#     steps:
-#       - name: 🎲 Generate Build ID
-#         id: generate-id
-#         run: |
-#           BUILD_ID="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
-#           echo "unique-id=$BUILD_ID" >> $GITHUB_OUTPUT
-#           echo "✅ Generated Build ID: $BUILD_ID"
+jobs:
+  setup:
+    name: 🔧 Environment Setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      environment: ${{ steps.env-config.outputs.ENVIRONMENT }}
+      build-id: ${{ steps.generate-id.outputs.unique-id }}
+    steps:
+      - name: 🎲 Generate Build ID
+        id: generate-id
+        run: |
+          BUILD_ID="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "unique-id=$BUILD_ID" >> $GITHUB_OUTPUT
+          echo "✅ Generated Build ID: $BUILD_ID"
 
-#       - name: 🔧 Determine Environment
-#         id: env-config
-#         run: |
-#           BRANCH="${{ github.ref_name }}"
-#           echo "🌿 Branch: $BRANCH"
+      - name: 🔧 Determine Environment
+        id: env-config
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          echo "🌿 Branch: $BRANCH"
           
-#           case $BRANCH in
-#             "chevvu/dev") 
-#               echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
-#               echo "🔵 Environment: dev"
-#               ;;
-#             "chevvu/np") 
-#               echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
-#               echo "🟡 Environment: NP"
-#               ;;
-#             "chevvu/prod") 
-#               echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
-#               echo "🔴 Environment: Production"
-#               ;;
-#             *) 
-#               echo "❌ Unknown branch: $BRANCH"
-#               exit 1
-#               ;;
-#           esac
+          case $BRANCH in
+            "chevvu/dev") 
+              echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
+              echo "🔵 Environment: dev"
+              ;;
+            "chevvu/np") 
+              echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
+              echo "🟡 Environment: NP"
+              ;;
+            "chevvu/prod") 
+              echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
+              echo "🔴 Environment: Production"
+              ;;
+            *) 
+              echo "❌ Unknown branch: $BRANCH"
+              exit 1
+              ;;
+          esac
 
-#   build-and-push:
-#     name: 🏗️ ${{ matrix.service.name }}
-#     runs-on: ubuntu-latest
-#     timeout-minutes: 30
-#     needs: [setup]
-#     permissions:
-#       id-token: write
-#       contents: read
-#     strategy:
-#       fail-fast: false
-#       matrix:
-#         service:
-#           - name: langfuse-web
-#             dockerfile: ./web/Dockerfile
-#             context: .
-#           - name: langfuse-worker
-#             dockerfile: ./worker/Dockerfile
-#             context: .
-#           - name: langfuse-postgres
-#             base-image: postgres:17
-#           - name: langfuse-redis
-#             base-image: redis:7
-#           - name: langfuse-minio
-#             base-image: minio/minio:latest
-#           - name: langfuse-clickhouse
-#             base-image: clickhouse/clickhouse-server:latest
+  build-and-push:
+    name: 🏗️ ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [setup]
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: langfuse-web
+            dockerfile: ./web/Dockerfile
+            context: .
+          - name: langfuse-worker
+            dockerfile: ./worker/Dockerfile
+            context: .
+          - name: langfuse-postgres
+            base-image: postgres:17
+          - name: langfuse-redis
+            base-image: redis:7
+          - name: langfuse-minio
+            base-image: minio/minio:latest
+          - name: langfuse-clickhouse
+            base-image: clickhouse/clickhouse-server:latest
     
-#     steps:
-#       - name: 📥 Checkout Code
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 1
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-#       - name: 🔐 Configure AWS Credentials
-#         uses: aws-actions/configure-aws-credentials@v4
-#         with:
-#           role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-#           aws-region: us-east-1
+      - name: 🔐 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
+          aws-region: us-east-1
 
-#       - name: 🔑 Login to Amazon ECR
-#         id: login-ecr
-#         uses: aws-actions/amazon-ecr-login@v2
+      - name: 🔑 Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-#       - name: 🏗️ Set up Docker Buildx
-#         uses: docker/setup-buildx-action@v3
+      - name: 🏗️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-#       - name: 📋 Set Image Names
-#         id: image-names
-#         env:
-#           ENVIRONMENT: ${{ needs.setup.outputs.environment }}
-#           BUILD_ID: ${{ needs.setup.outputs.build-id }}
-#           SERVICE: ${{ matrix.service.name }}
-#         run: |
-#           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-#           REPO_NAME="${ENVIRONMENT}-${SERVICE}"
-#           IMAGE_TAG="${ENVIRONMENT}-${BUILD_ID}"
+      - name: 📋 Set Image Names
+        id: image-names
+        env:
+          ENVIRONMENT: ${{ needs.setup.outputs.environment }}
+          BUILD_ID: ${{ needs.setup.outputs.build-id }}
+          SERVICE: ${{ matrix.service.name }}
+        run: |
+          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          REPO_NAME="${ENVIRONMENT}-${SERVICE}"
+          IMAGE_TAG="${ENVIRONMENT}-${BUILD_ID}"
           
-#           echo "ecr-repo=${REPO_NAME}" >> $GITHUB_OUTPUT
-#           echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-#           echo "full-image=${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
-#           echo "latest-image=${ECR_REGISTRY}/${REPO_NAME}:latest" >> $GITHUB_OUTPUT
+          echo "ecr-repo=${REPO_NAME}" >> $GITHUB_OUTPUT
+          echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "full-image=${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "latest-image=${ECR_REGISTRY}/${REPO_NAME}:latest" >> $GITHUB_OUTPUT
           
-#           echo "📦 Building: ${REPO_NAME}:${IMAGE_TAG}"
+          echo "📦 Building: ${REPO_NAME}:${IMAGE_TAG}"
 
-#       - name: 📦 Create Dockerfile for Base Images
-#         if: matrix.service.base-image
-#         run: |
-#           mkdir -p ./temp-${{ matrix.service.name }}
-#           cat > ./temp-${{ matrix.service.name }}/Dockerfile <<'EOF'
-#           FROM ${{ matrix.service.base-image }}
-#           LABEL service="${{ matrix.service.name }}"
-#           LABEL environment="${{ needs.setup.outputs.environment }}"
-#           LABEL build-id="${{ needs.setup.outputs.build-id }}"
-#           EOF
+      - name: 📦 Create Dockerfile for Base Images
+        if: matrix.service.base-image
+        run: |
+          mkdir -p ./temp-${{ matrix.service.name }}
+          cat > ./temp-${{ matrix.service.name }}/Dockerfile <<'EOF'
+          FROM ${{ matrix.service.base-image }}
+          LABEL service="${{ matrix.service.name }}"
+          LABEL environment="${{ needs.setup.outputs.environment }}"
+          LABEL build-id="${{ needs.setup.outputs.build-id }}"
+          EOF
 
-#       - name: 🔍 Ensure ECR Repository Exists
-#         env:
-#           REPO_NAME: ${{ steps.image-names.outputs.ecr-repo }}
-#         run: |
-#           if ! aws ecr describe-repositories --repository-names "$REPO_NAME" &>/dev/null; then
-#             echo "📦 Creating ECR repository: $REPO_NAME"
-#             aws ecr create-repository \
-#               --repository-name "$REPO_NAME" \
-#               --image-scanning-configuration scanOnPush=true \
-#               --encryption-configuration encryptionType=AES256
-#           else
-#             echo "✅ ECR repository exists: $REPO_NAME"
-#           fi
+      - name: 🔍 Ensure ECR Repository Exists
+        env:
+          REPO_NAME: ${{ steps.image-names.outputs.ecr-repo }}
+        run: |
+          if ! aws ecr describe-repositories --repository-names "$REPO_NAME" &>/dev/null; then
+            echo "📦 Creating ECR repository: $REPO_NAME"
+            aws ecr create-repository \
+              --repository-name "$REPO_NAME" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+          else
+            echo "✅ ECR repository exists: $REPO_NAME"
+          fi
 
-#       - name: 🏗️ Build and Push Docker Image (App Services)
-#         if: ${{ !matrix.service.base-image }}
-#         uses: docker/build-push-action@v5
-#         with:
-#           context: ${{ matrix.service.context }}
-#           file: ${{ matrix.service.dockerfile }}
-#           push: true
-#           tags: |
-#             ${{ steps.image-names.outputs.full-image }}
-#             ${{ steps.image-names.outputs.latest-image }}
-#           cache-from: type=gha,scope=${{ matrix.service.name }}
-#           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
-#           build-args: |
-#             NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=us-east-1
-#             NODE_ENV=production
+      - name: 🏗️ Build and Push Docker Image (App Services)
+        if: ${{ !matrix.service.base-image }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.image-names.outputs.full-image }}
+            ${{ steps.image-names.outputs.latest-image }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+          build-args: |
+            NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=US
+            NODE_ENV=production
 
-#       - name: 🏗️ Build and Push Docker Image (Base Images)
-#         if: matrix.service.base-image
-#         uses: docker/build-push-action@v5
-#         with:
-#           context: ./temp-${{ matrix.service.name }}
-#           file: ./temp-${{ matrix.service.name }}/Dockerfile
-#           push: true
-#           tags: |
-#             ${{ steps.image-names.outputs.full-image }}
-#             ${{ steps.image-names.outputs.latest-image }}
-#           cache-from: type=gha,scope=${{ matrix.service.name }}
-#           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+      - name: 🏗️ Build and Push Docker Image (Base Images)
+        if: matrix.service.base-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./temp-${{ matrix.service.name }}
+          file: ./temp-${{ matrix.service.name }}/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image-names.outputs.full-image }}
+            ${{ steps.image-names.outputs.latest-image }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
 
-#       - name: ✅ Verify Image Push
-#         run: |
-#           echo "🔍 Verifying image in ECR..."
-#           REPO_NAME="${{ steps.image-names.outputs.ecr-repo }}"
-#           IMAGE_TAG="${{ steps.image-names.outputs.image-tag }}"
+      - name: ✅ Verify Image Push
+        run: |
+          echo "🔍 Verifying image in ECR..."
+          REPO_NAME="${{ steps.image-names.outputs.ecr-repo }}"
+          IMAGE_TAG="${{ steps.image-names.outputs.image-tag }}"
           
-#           # Wait a moment for ECR to process
-#           sleep 5
+          # Wait a moment for ECR to process
+          sleep 5
           
-#           # Describe the image
-#           IMAGE_INFO=$(aws ecr describe-images \
-#             --repository-name "$REPO_NAME" \
-#             --image-ids imageTag="$IMAGE_TAG" \
-#             --output json 2>/dev/null || echo '{"imageDetails":[]}')
+          # Describe the image
+          IMAGE_INFO=$(aws ecr describe-images \
+            --repository-name "$REPO_NAME" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --output json 2>/dev/null || echo '{"imageDetails":[]}')
           
-#           # Check if image exists
-#           if echo "$IMAGE_INFO" | jq -e '.imageDetails | length > 0' > /dev/null; then
-#             echo "✅ Image successfully pushed to ECR!"
-#             echo "$IMAGE_INFO" | jq -r '.imageDetails[0] | "Tag: \(.imageTags[0])\nPushed: \(.imagePushedAt)\nSize: \(.imageSizeInBytes) bytes"'
-#           else
-#             echo "❌ Warning: Image not found in ECR, but push command succeeded"
-#             echo "This might be a timing issue. Checking repository..."
-#             aws ecr describe-repositories --repository-names "$REPO_NAME" || true
-#           fi
+          # Check if image exists
+          if echo "$IMAGE_INFO" | jq -e '.imageDetails | length > 0' > /dev/null; then
+            echo "✅ Image successfully pushed to ECR!"
+            echo "$IMAGE_INFO" | jq -r '.imageDetails[0] | "Tag: \(.imageTags[0])\nPushed: \(.imagePushedAt)\nSize: \(.imageSizeInBytes) bytes"'
+          else
+            echo "❌ Warning: Image not found in ECR, but push command succeeded"
+            echo "This might be a timing issue. Checking repository..."
+            aws ecr describe-repositories --repository-names "$REPO_NAME" || true
+          fi
 
-#       - name: 📊 Image Summary
-#         run: |
-#           echo "### 📦 ${{ matrix.service.name }} Build Summary" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Image**: \`${{ steps.image-names.outputs.full-image }}\`" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Latest**: \`${{ steps.image-names.outputs.latest-image }}\`" >> $GITHUB_STEP_SUMMARY
+      - name: 📊 Image Summary
+        run: |
+          echo "### 📦 ${{ matrix.service.name }} Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`${{ steps.image-names.outputs.full-image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest**: \`${{ steps.image-names.outputs.latest-image }}\`" >> $GITHUB_STEP_SUMMARY
 
-#   summary:
-#     name: 📊 Deployment Summary
-#     runs-on: ubuntu-latest
-#     needs: [setup, build-and-push]
-#     if: always()
-#     steps:
-#       - name: 📋 Generate Summary
-#         run: |
-#           echo "## 🚀 Langfuse Multi-Service Deployment Summary" >> $GITHUB_STEP_SUMMARY
-#           echo "" >> $GITHUB_STEP_SUMMARY
-#           echo "### 📊 Build Information" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-#           echo "- **Status**: ${{ needs.build-and-push.result }}" >> $GITHUB_STEP_SUMMARY
+  summary:
+    name: 📊 Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [setup, build-and-push]
+    if: always()
+    steps:
+      - name: 📋 Generate Summary
+        run: |
+          echo "## 🚀 Langfuse Multi-Service Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ needs.build-and-push.result }}" >> $GITHUB_STEP_SUMMARY
