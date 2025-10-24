@@ -1,0 +1,188 @@
+# name: Langfuse Parallel Service Deploy to ECS
+
+on:
+  push:
+    branches:
+      - chevvu/dev
+      - chevvu/np
+      - chevvu/prod
+    paths-ignore:
+      - "**/*.md"
+      - ".gitignore"
+      - "*.config.js"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - dev
+          - np
+          - prod
+
+jobs:
+  prepare:
+    name: 🔧 Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.env.outputs.ENVIRONMENT }}
+    steps:
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ inputs.environment }}"
+            echo "ENVIRONMENT=${ENV}" >> $GITHUB_OUTPUT
+            echo "🎯 Manual deployment to ${ENV} environment"
+          else
+            BR="${{ github.ref_name }}"
+            case "$BR" in
+              "chevvu/dev")
+                echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
+                ;;
+              "chevvu/np")
+                echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
+                ;;
+              "chevvu/prod")
+                echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
+                ;;
+              *)
+                echo "❌ Unknown branch $BR"
+                exit 1
+                ;;
+            esac
+            echo "🚀 Automatic deployment from branch ${BR}"
+          fi
+
+  deploy-redis:
+    name: 🔴 Deploy Redis
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Load environment variables from dev.env
+        run: |
+          if [ -f dev.env ]; then
+            set -a
+            source dev.env
+            set +a
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
+
+      - name: Force new deployment
+        run: |
+          ENV="${{ needs.prepare.outputs.env }}"
+          case "$ENV" in
+            dev)
+              CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
+              SERVICE="${{ secrets.DEV_REDIS_SERVICE }}"
+              ;;
+            np)
+              CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
+              SERVICE="${{ secrets.NP_REDIS_SERVICE }}"
+              ;;
+            prod)
+              CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
+              SERVICE="${{ secrets.PROD_REDIS_SERVICE }}"
+              ;;
+          esac
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
+            --force-new-deployment \
+            --no-cli-pager
+          echo "✅ Redis deployment triggered"
+
+  # Repeat the "Load environment variables from dev.env" step for other jobs like deploy-clickhouse, deploy-minio, deploy-web, deploy-worker
+  # Example for another job:
+  deploy-clickhouse:
+    name: 🏠 Deploy ClickHouse
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Load environment variables from dev.env
+        run: |
+          if [ -f dev.env ]; then
+            set -a
+            source dev.env
+            set +a
+          fi
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
+      - name: Force new deployment
+        run: |
+          ENV="${{ needs.prepare.outputs.env }}"
+          case "$ENV" in
+            dev)
+              CLUSTER="${{ secrets.DEV_ECS_CLUSTER_NAME }}"
+              SERVICE="${{ secrets.DEV_CLICKHOUSE_SERVICE }}"
+              ;;
+            np)
+              CLUSTER="${{ secrets.NP_ECS_CLUSTER_NAME }}"
+              SERVICE="${{ secrets.NP_CLICKHOUSE_SERVICE }}"
+              ;;
+            prod)
+              CLUSTER="${{ secrets.PROD_ECS_CLUSTER_NAME }}"
+              SERVICE="${{ secrets.PROD_CLICKHOUSE_SERVICE }}"
+              ;;
+          esac
+          echo "🚀 Forcing new deployment for $SERVICE in cluster $CLUSTER"
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
+            --force-new-deployment \
+            --no-cli-pager
+          echo "✅ ClickHouse deployment triggered"
+
+  # ...repeat for deploy-minio, deploy-web, deploy-worker
+
+  summary:
+    name: 📊 Deployment Summary
+    needs: [prepare, deploy-redis, deploy-clickhouse, deploy-minio, deploy-web, deploy-worker]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate deployment summary
+        run: |
+          echo "## 🚀 Langfuse Parallel Service Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Deployment Information" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ needs.prepare.outputs.env }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Redis | \`${{ needs.deploy-redis.result }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ClickHouse | \`${{ needs.deploy-clickhouse.result }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| MinIO | \`${{ needs.deploy-minio.result }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web | \`${{ needs.deploy-web.result }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Worker | \`${{ needs.deploy-worker.result }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ℹ️ Notes" >> $GITHUB_STEP_SUMMARY
+          echo "- PostgreSQL is managed separately (RDS) and not deployed via ECS" >> $GITHUB_STEP_SUMMARY
+          echo "- Services pull the latest images from ECR with tag \`:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- All credentials are managed via AWS Secrets Manager in existing task definitions" >> $GITHUB_STEP_SUMMARY
