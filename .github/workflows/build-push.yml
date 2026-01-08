@@ -1,22 +1,33 @@
-name: Langfuse Multi-Service Build & Push to ECR
+name: Multi-Environment CubeJS Build, Push & Deploy
 
 on:
   push:
     branches:
-      - chevvu/dev
-      - chevvu/np
-      - chevvu/prod
+      - edbwe_dev
+      - non-prod
+      - prod
     paths-ignore:
       - "**/*.md"
       - ".github/*"
       - ".gitignore"
       - "*.config.js"
 
+  pull_request:
+    branches: [ edbwe_dev ]
+    types: [closed]
+    paths-ignore:
+      - "**/*.md"
+      - ".github/*"
+      - ".gitignore"
+      - "*.config.js"
+
+  release:
+    types: [prereleased, released]
+
 jobs:
-  setup:
+  dispatch:
     name: 🔧 Environment Setup
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     outputs:
       environment: ${{ steps.env-config.outputs.ENVIRONMENT }}
       build-id: ${{ steps.generate-id.outputs.unique-id }}
@@ -24,199 +35,193 @@ jobs:
       - name: 🎲 Generate Build ID
         id: generate-id
         run: |
-          BUILD_ID="${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
+          BUILD_ID="${{ github.run_number }}"
           echo "unique-id=$BUILD_ID" >> $GITHUB_OUTPUT
-          echo "✅ Generated Build ID: $BUILD_ID"
 
       - name: 🔧 Determine Environment
         id: env-config
         run: |
-          BRANCH="${{ github.ref_name }}"
-          echo "🌿 Branch: $BRANCH"
-          
-          case $BRANCH in
-            "chevvu/dev") 
-              echo "ENVIRONMENT=dev" >> $GITHUB_OUTPUT
-              echo "🔵 Environment: dev"
-              ;;
-            "chevvu/np") 
-              echo "ENVIRONMENT=np" >> $GITHUB_OUTPUT
-              echo "🟡 Environment: NP"
-              ;;
-            "chevvu/prod") 
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+              ENVIRONMENT="non-prod"
+              echo "ENVIRONMENT=non-prod" >> $GITHUB_OUTPUT
+            else
+              ENVIRONMENT="prod"
               echo "ENVIRONMENT=prod" >> $GITHUB_OUTPUT
-              echo "🔴 Environment: Production"
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            ENVIRONMENT="edbwe_dev"
+            echo "ENVIRONMENT=edbwe_dev" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            BRANCH="${{ github.ref_name }}"
+            case $BRANCH in
+              "edbwe_dev") ENVIRONMENT="edbwe_dev" ;;
+              "non-prod") ENVIRONMENT="non-prod" ;;
+              "prod") ENVIRONMENT="prod" ;;
+              *) echo "❌ Unknown branch: $BRANCH"; exit 1 ;;
+            esac
+            echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Workflow should not run - PR was closed but not merged"
+            exit 1
+          fi
+
+  build-and-push:
+    name: 🔨 Build & Push Images
+    needs: dispatch
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      cube_image: ${{ steps.get-cube-image.outputs.cube_image }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      # --- AWS Credentials Configuration ---
+      - name: 🔐 Configure AWS credentials (edbwe_dev)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.DISCOVERY_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DISCOVERY_AWS_REGION }}
+        if: ${{ needs.dispatch.outputs.environment == 'edbwe_dev' }}
+
+      - name: 🔐 Configure AWS credentials (Non-Prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.NP_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.NP_AWS_REGION }}
+        if: ${{ needs.dispatch.outputs.environment == 'non-prod' }}
+
+      - name: 🔐 Configure AWS credentials (Prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.PROD_AWS_REGION }}
+        if: ${{ needs.dispatch.outputs.environment == 'prod' }}
+
+      - name: 🔑 ECR Login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🔨 Build & Push Cube Images
+        id: build-and-push-cube
+        env:
+          ENVIRONMENT: ${{ needs.dispatch.outputs.environment }}
+          BUILD_ID: ${{ needs.dispatch.outputs.build-id }}
+        run: |
+          set -euo pipefail
+          # Env-specific settings
+          case "$ENVIRONMENT" in
+            edbwe_dev)
+              AWS_ACCOUNT_ID='${{ secrets.DISCOVERY_AWS_ACCOUNT_ID }}'
+              REGION='${{ secrets.DISCOVERY_AWS_REGION }}'
+              CUBE_REPO='${{ secrets.DISCOVERY_CUBE_ECR_REPO }}'
+              CUBESTORE_REPO='${{ secrets.DISCOVERY_CUBESTORE_ECR_REPO }}'
               ;;
-            *) 
-              echo "❌ Unknown branch: $BRANCH"
+            non-prod)
+              AWS_ACCOUNT_ID='${{ secrets.NP_AWS_ACCOUNT_ID }}'
+              REGION='${{ secrets.NP_AWS_REGION }}'
+              CUBE_REPO='${{ secrets.NP_CUBE_ECR_REPO }}'
+              CUBESTORE_REPO='${{ secrets.NP_CUBESTORE_ECR_REPO }}'
+              ;;
+            prod)
+              AWS_ACCOUNT_ID='${{ secrets.PROD_AWS_ACCOUNT_ID }}'
+              REGION='${{ secrets.PROD_AWS_REGION }}'
+              CUBE_REPO='${{ secrets.PROD_CUBE_ECR_REPO }}'
+              CUBESTORE_REPO='${{ secrets.PROD_CUBESTORE_ECR_REPO }}'
+              ;;
+            *)
+              echo "❌ Unknown environment: $ENVIRONMENT"
               exit 1
               ;;
           esac
 
-  build-and-push:
-    name: 🏗️ ${{ matrix.service.name }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [setup]
-    permissions:
-      id-token: write
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - name: langfuse-web
-            dockerfile: ./web/Dockerfile
-            context: .
-          - name: langfuse-worker
-            dockerfile: ./worker/Dockerfile
-            context: .
-          - name: langfuse-postgres
-            base-image: postgres:17
-          - name: langfuse-redis
-            base-image: redis:7
-          - name: langfuse-minio
-            base-image: minio/minio:latest
-          - name: langfuse-clickhouse
-            base-image: clickhouse/clickhouse-server:latest
-    
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+          ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
-      - name: 🔐 Configure AWS Credentials
+          # create repo if not exists
+          for REPO in "$CUBE_REPO" "$CUBESTORE_REPO"; do
+            if ! aws ecr describe-repositories --repository-names "$REPO" >/dev/null 2>&1; then
+              echo "📦 Creating ECR repository: $REPO"
+              aws ecr create-repository --repository-name "$REPO" --image-scanning-configuration scanOnPush=true
+            fi
+          done
+
+          # Build and push CubeJS API
+          docker build -t "${ECR_URI}/${CUBE_REPO}:${ENVIRONMENT}-${BUILD_ID}" -t "${ECR_URI}/${CUBE_REPO}:latest" ./cubejs/cube
+          docker push "${ECR_URI}/${CUBE_REPO}:${ENVIRONMENT}-${BUILD_ID}"
+          docker push "${ECR_URI}/${CUBE_REPO}:latest"
+
+          # Capture the full image reference (digest) for ECS
+          DIGEST=$(aws ecr describe-images --repository-name "$CUBE_REPO" --image-ids imageTag="${ENVIRONMENT}-${BUILD_ID}" --query 'imageDetails[0].imageDigest' --output text)
+          CUBE_IMAGE="${ECR_URI}/${CUBE_REPO}@${DIGEST}"
+          echo "cube_image=${CUBE_IMAGE}" >> $GITHUB_OUTPUT
+
+          # Build and push CubeStore image (not used in this ECS task def, but done as per workflow)
+          docker build -t "${ECR_URI}/${CUBESTORE_REPO}:${ENVIRONMENT}-${BUILD_ID}" -t "${ECR_URI}/${CUBESTORE_REPO}:latest" ./cubejs/cubestore
+          docker push "${ECR_URI}/${CUBESTORE_REPO}:${ENVIRONMENT}-${BUILD_ID}"
+          docker push "${ECR_URI}/${CUBESTORE_REPO}:latest"
+
+      - name: Get cube image output
+        id: get-cube-image
+        run: |
+          CUBE_IMAGE=$(cat $GITHUB_OUTPUT | grep 'cube_image=' | cut -d= -f2-)
+          echo "cube_image=${CUBE_IMAGE}" >> $GITHUB_OUTPUT
+
+
+  update-taskdef-and-deploy:
+    name: 🚀 Update ECS Task Definition & Deploy to Service
+    needs: [dispatch, build-and-push]
+    runs-on: ubuntu-latest
+    if: ${{ needs.dispatch.outputs.environment == 'edbwe_dev' }}
+    steps:
+      - name: 🔐 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::203874373410:role/breed-dii-gen-ai-infra-github-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.DISCOVERY_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DISCOVERY_AWS_REGION }}
 
-      - name: 🔑 Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: 🏗️ Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 📋 Set Image Names
-        id: image-names
-        env:
-          ENVIRONMENT: ${{ needs.setup.outputs.environment }}
-          BUILD_ID: ${{ needs.setup.outputs.build-id }}
-          SERVICE: ${{ matrix.service.name }}
+      - name: 📝 Download current ECS task definition
         run: |
-          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-          REPO_NAME="${ENVIRONMENT}-${SERVICE}"
-          IMAGE_TAG="${ENVIRONMENT}-${BUILD_ID}"
-          
-          echo "ecr-repo=${REPO_NAME}" >> $GITHUB_OUTPUT
-          echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "full-image=${ECR_REGISTRY}/${REPO_NAME}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
-          echo "latest-image=${ECR_REGISTRY}/${REPO_NAME}:latest" >> $GITHUB_OUTPUT
-          
-          echo "📦 Building: ${REPO_NAME}:${IMAGE_TAG}"
+          aws ecs describe-task-definition \
+            --task-definition dev-cubejs-api \
+            --query 'taskDefinition' \
+            --output json > task-def.json
 
-      - name: 📦 Create Dockerfile for Base Images
-        if: matrix.service.base-image
+      - name: 🛠️ Render updated ECS task definition (image and env only)
         run: |
-          mkdir -p ./temp-${{ matrix.service.name }}
-          cat > ./temp-${{ matrix.service.name }}/Dockerfile <<'EOF'
-          FROM ${{ matrix.service.base-image }}
-          LABEL service="${{ matrix.service.name }}"
-          LABEL environment="${{ needs.setup.outputs.environment }}"
-          LABEL build-id="${{ needs.setup.outputs.build-id }}"
+          cat > env.json <<EOF
+          [
+            {"name": "CUBEJS_CUBESTORE_HOST", "value": "cubestore-router.dev.ecs.local:9999"},
+            {"name": "AWS_REGION", "value": "us-east-1"},
+            {"name": "CUBEJS_DB_TYPE", "value": "postgres"},
+            {"name": "CUBEJS_DB_PORT", "value": "5432"},
+            {"name": "CUBEJS_DEV_MODE", "value": "true"},
+            {"name": "ENVIRONMENT", "value": "dev"}
+          ]
           EOF
 
-      - name: 🔍 Ensure ECR Repository Exists
-        env:
-          REPO_NAME: ${{ steps.image-names.outputs.ecr-repo }}
+          jq --arg IMAGE "${{ needs.build-and-push.outputs.cube_image }}" \
+             --slurpfile ENV env.json '
+            .containerDefinitions[0].image = $IMAGE
+            | .containerDefinitions[0].environment = $ENV[0]
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+          ' task-def.json > new-task-def.json
+
+      - name: 📦 Register revised ECS task definition
+        id: register-taskdef
         run: |
-          if ! aws ecr describe-repositories --repository-names "$REPO_NAME" &>/dev/null; then
-            echo "📦 Creating ECR repository: $REPO_NAME"
-            aws ecr create-repository \
-              --repository-name "$REPO_NAME" \
-              --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256
-          else
-            echo "✅ ECR repository exists: $REPO_NAME"
-          fi
+          TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json \
+            --query "taskDefinition.taskDefinitionArn" --output text)
+          echo "arn=$TD_ARN" >> $GITHUB_OUTPUT
 
-      - name: 🏗️ Build and Push Docker Image (App Services)
-        if: ${{ !matrix.service.base-image }}
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ matrix.service.context }}
-          file: ${{ matrix.service.dockerfile }}
-          push: true
-          tags: |
-            ${{ steps.image-names.outputs.full-image }}
-            ${{ steps.image-names.outputs.latest-image }}
-          cache-from: type=gha,scope=${{ matrix.service.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
-          build-args: |
-            NEXT_PUBLIC_LANGFUSE_CLOUD_REGION=US
-            NODE_ENV=production
-
-      - name: 🏗️ Build and Push Docker Image (Base Images)
-        if: matrix.service.base-image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./temp-${{ matrix.service.name }}
-          file: ./temp-${{ matrix.service.name }}/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.image-names.outputs.full-image }}
-            ${{ steps.image-names.outputs.latest-image }}
-          cache-from: type=gha,scope=${{ matrix.service.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
-
-      - name: ✅ Verify Image Push
+      - name: 🚀 Update ECS service in-place
         run: |
-          echo "🔍 Verifying image in ECR..."
-          REPO_NAME="${{ steps.image-names.outputs.ecr-repo }}"
-          IMAGE_TAG="${{ steps.image-names.outputs.image-tag }}"
-          
-          # Wait a moment for ECR to process
-          sleep 5
-          
-          # Describe the image
-          IMAGE_INFO=$(aws ecr describe-images \
-            --repository-name "$REPO_NAME" \
-            --image-ids imageTag="$IMAGE_TAG" \
-            --output json 2>/dev/null || echo '{"imageDetails":[]}')
-          
-          # Check if image exists
-          if echo "$IMAGE_INFO" | jq -e '.imageDetails | length > 0' > /dev/null; then
-            echo "✅ Image successfully pushed to ECR!"
-            echo "$IMAGE_INFO" | jq -r '.imageDetails[0] | "Tag: \(.imageTags[0])\nPushed: \(.imagePushedAt)\nSize: \(.imageSizeInBytes) bytes"'
-          else
-            echo "❌ Warning: Image not found in ECR, but push command succeeded"
-            echo "This might be a timing issue. Checking repository..."
-            aws ecr describe-repositories --repository-names "$REPO_NAME" || true
-          fi
+          aws ecs update-service \
+            --cluster dev-cubejs-api-ecs-cluster \
+            --service dev-cubejs-api-service \
+            --task-definition ${{ steps.register-taskdef.outputs.arn }}
 
-      - name: 📊 Image Summary
-        run: |
-          echo "### 📦 ${{ matrix.service.name }} Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image**: \`${{ steps.image-names.outputs.full-image }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Latest**: \`${{ steps.image-names.outputs.latest-image }}\`" >> $GITHUB_STEP_SUMMARY
-
-  summary:
-    name: 📊 Deployment Summary
-    runs-on: ubuntu-latest
-    needs: [setup, build-and-push]
-    if: always()
-    steps:
-      - name: 📋 Generate Summary
-        run: |
-          echo "## 🚀 Langfuse Multi-Service Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Build Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build ID**: ${{ needs.setup.outputs.build-id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ needs.build-and-push.result }}" >> $GITHUB_STEP_SUMMARY
+      - name: ✅ Deployment finished
+        run: echo "Service now running updated task definition and image."
